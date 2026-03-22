@@ -7,10 +7,6 @@ export class MarkPmsTaskOverdueAction {
       throw new Error("MARK_PMS_TASK_OVERDUE command is missing taskId");
     }
 
-    store.updateTask(command.taskId, {
-      status: "OVERDUE",
-      lastCheckedAt: command.issuedAt,
-      lastOverdueAt: command.issuedAt,
-    });
+    store.markTaskOverdue(command.taskId, command.issuedAt);
   }
 }

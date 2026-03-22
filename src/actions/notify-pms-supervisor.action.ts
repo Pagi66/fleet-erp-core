@@ -7,8 +7,6 @@ export class NotifyPmsSupervisorAction {
       throw new Error("NOTIFY_PMS_SUPERVISOR command is missing taskId");
     }
 
-    store.updateTask(command.taskId, {
-      lastNotifiedAt: command.issuedAt,
-    });
+    store.recordTaskNotification(command.taskId, command.issuedAt);
   }
 }

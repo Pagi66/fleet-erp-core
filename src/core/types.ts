@@ -22,6 +22,14 @@ export type TaskKind = "PMS";
 
 export type TaskStatus = "PENDING" | "COMPLETED" | "OVERDUE";
 
+export type TaskHistoryType =
+  | "CREATED"
+  | "CHECKED"
+  | "STATUS_CHANGED"
+  | "REPLANNED"
+  | "NOTIFIED"
+  | "COMPLETED";
+
 export interface LogRecord {
   businessDate: string;
   logType: LogType;
@@ -62,6 +70,14 @@ export interface Task {
   replannedFromDueDate: string | null;
   replannedToDueDate: string | null;
   lastNotifiedAt: string | null;
+}
+
+export interface TaskHistoryEntry {
+  taskId: string;
+  type: TaskHistoryType;
+  occurredAt: string;
+  status: TaskStatus;
+  note: string;
 }
 
 export interface EngineEvent {
@@ -109,6 +125,7 @@ export interface StoreSnapshot {
 
 export interface TaskSnapshot {
   task: Task | null;
+  history: TaskHistoryEntry[];
 }
 
 export const REQUIRED_DAILY_LOGS: LogType[] = [

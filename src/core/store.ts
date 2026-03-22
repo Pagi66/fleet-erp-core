@@ -6,6 +6,7 @@ import {
   REQUIRED_DAILY_LOGS,
   StoreSnapshot,
   Task,
+  TaskHistoryEntry,
   TaskSnapshot,
 } from "./types";
 
@@ -17,6 +18,8 @@ export class InMemoryStore {
   private readonly escalationByDate = new Map<string, EscalationState>();
 
   private readonly tasksById = new Map<string, Task>();
+
+  private readonly taskHistoryById = new Map<string, TaskHistoryEntry[]>();
 
   saveLog(record: LogRecord): void {
     const existing = this.logsByDate.get(record.businessDate) ?? [];
@@ -106,17 +109,119 @@ export class InMemoryStore {
 
   saveTask(task: Task): void {
     this.tasksById.set(task.id, task);
+    this.appendTaskHistory(task.id, {
+      taskId: task.id,
+      type: "CREATED",
+      occurredAt: task.businessDate,
+      status: task.status,
+      note: `Task created for ${task.kind}`,
+    });
   }
 
   getTask(taskId: string): Task | null {
     return this.tasksById.get(taskId) ?? null;
   }
 
-  updateTask(taskId: string, update: Partial<Task>): Task {
-    const current = this.getTask(taskId);
-    if (!current) {
-      throw new Error(`Task not found: ${taskId}`);
+  completeTask(taskId: string, occurredAt: string): Task {
+    const current = this.requireTask(taskId);
+    if (current.status === "COMPLETED") {
+      return current;
     }
+
+    const next = this.updateTask(taskId, {
+      status: "COMPLETED",
+      completedAt: occurredAt,
+      lastCheckedAt: occurredAt,
+    });
+
+    this.appendTaskHistory(taskId, {
+      taskId,
+      type: "COMPLETED",
+      occurredAt,
+      status: next.status,
+      note: "Task marked completed",
+    });
+
+    return next;
+  }
+
+  markTaskChecked(taskId: string, occurredAt: string): Task {
+    const next = this.updateTask(taskId, {
+      lastCheckedAt: occurredAt,
+    });
+
+    this.appendTaskHistory(taskId, {
+      taskId,
+      type: "CHECKED",
+      occurredAt,
+      status: next.status,
+      note: "Task evaluated by rule engine",
+    });
+
+    return next;
+  }
+
+  markTaskOverdue(taskId: string, occurredAt: string): Task {
+    const current = this.requireTask(taskId);
+    if (current.status === "COMPLETED") {
+      return current;
+    }
+
+    const next = this.updateTask(taskId, {
+      status: "OVERDUE",
+      lastCheckedAt: occurredAt,
+      lastOverdueAt: occurredAt,
+    });
+
+    this.appendTaskHistory(taskId, {
+      taskId,
+      type: "STATUS_CHANGED",
+      occurredAt,
+      status: next.status,
+      note: "Task marked overdue",
+    });
+
+    return next;
+  }
+
+  replanTask(taskId: string, nextDueDate: string, occurredAt: string): Task {
+    const current = this.requireTask(taskId);
+    const next = this.updateTask(taskId, {
+      dueDate: nextDueDate,
+      replannedFromDueDate: current.dueDate,
+      replannedToDueDate: nextDueDate,
+      status: current.status === "COMPLETED" ? "COMPLETED" : "PENDING",
+    });
+
+    this.appendTaskHistory(taskId, {
+      taskId,
+      type: "REPLANNED",
+      occurredAt,
+      status: next.status,
+      note: `Task replanned from ${current.dueDate} to ${nextDueDate}`,
+    });
+
+    return next;
+  }
+
+  recordTaskNotification(taskId: string, occurredAt: string): Task {
+    const next = this.updateTask(taskId, {
+      lastNotifiedAt: occurredAt,
+    });
+
+    this.appendTaskHistory(taskId, {
+      taskId,
+      type: "NOTIFIED",
+      occurredAt,
+      status: next.status,
+      note: "Task notification recorded",
+    });
+
+    return next;
+  }
+
+  updateTask(taskId: string, update: Partial<Task>): Task {
+    const current = this.requireTask(taskId);
 
     const next: Task = {
       ...current,
@@ -130,6 +235,7 @@ export class InMemoryStore {
   getTaskSnapshot(taskId: string): TaskSnapshot {
     return {
       task: this.getTask(taskId),
+      history: [...(this.taskHistoryById.get(taskId) ?? [])],
     };
   }
 
@@ -147,5 +253,22 @@ export class InMemoryStore {
         submittedByRole,
       });
     }
+  }
+
+  private requireTask(taskId: string): Task {
+    const task = this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+    return task;
+  }
+
+  private appendTaskHistory(
+    taskId: string,
+    entry: TaskHistoryEntry,
+  ): void {
+    const current = this.taskHistoryById.get(taskId) ?? [];
+    current.push(entry);
+    this.taskHistoryById.set(taskId, current);
   }
 }

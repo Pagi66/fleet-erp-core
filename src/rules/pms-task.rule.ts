@@ -36,6 +36,8 @@ export class PmsTaskRule {
       return this.createDecision(event, "NO_CHANGE", []);
     }
 
+    store.markTaskChecked(snapshot.task.id, event.occurredAt);
+
     if (snapshot.task.status === "COMPLETED") {
       return this.createDecision(event, "TASK_COMPLETED", []);
     }
