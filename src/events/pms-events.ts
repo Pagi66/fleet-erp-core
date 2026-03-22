@@ -1,5 +1,4 @@
-import { RoleId } from "../core/types";
-import { AppEvent } from "./event-system";
+import { EngineEvent, RoleId } from "../core/types";
 
 export function createPmsTaskGenerateEvent(
   taskId: string,
@@ -8,17 +7,15 @@ export function createPmsTaskGenerateEvent(
   dueDate: string,
   assignedRole: RoleId,
   occurredAt: string,
-): AppEvent {
+): EngineEvent {
   return {
-    name: "PMS_TASK_GENERATE",
+    type: "PMS_TASK_GENERATE",
+    businessDate,
     occurredAt,
-    payload: {
-      taskId,
-      taskTitle,
-      businessDate,
-      dueDate,
-      assignedRole,
-    },
+    taskId,
+    taskTitle,
+    dueDate,
+    assignedRole,
   };
 }
 
@@ -26,13 +23,11 @@ export function createPmsTaskCheckEvent(
   taskId: string,
   businessDate: string,
   occurredAt: string,
-): AppEvent {
+): EngineEvent {
   return {
-    name: "PMS_TASK_CHECK",
+    type: "PMS_TASK_CHECK",
+    businessDate,
     occurredAt,
-    payload: {
-      taskId,
-      businessDate,
-    },
+    taskId,
   };
 }

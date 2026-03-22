@@ -1,27 +1,37 @@
 import { EscalateCoAction } from "../actions/escalate-co.action";
+import { CheckTaskAction } from "../actions/check-task.action";
 import { CreatePmsTaskAction } from "../actions/create-pms-task.action";
+import { CreateDefectTaskAction } from "../actions/create-defect-task.action";
 import { MarkComplianceAction } from "../actions/mark-compliance.action";
 import { MarkPmsTaskOverdueAction } from "../actions/mark-pms-task-overdue.action";
+import { EscalateDefectToLogComdAction } from "../actions/escalate-defect-to-log-comd.action";
+import { EscalateDefectToMccAction } from "../actions/escalate-defect-to-mcc.action";
 import { NotifyMeoAction } from "../actions/notify-meo.action";
 import { NotifyPmsSupervisorAction } from "../actions/notify-pms-supervisor.action";
 import { ReplanPmsTaskAction } from "../actions/replan-pms-task.action";
 import { ActionCommand, EngineEvent } from "./types";
 import { InMemoryStore } from "./store";
 import { DailyLogRule } from "../rules/daily-log.rule";
+import { DefectRule } from "../rules/defect.rule";
 import { PmsTaskRule } from "../rules/pms-task.rule";
-import { AppEvent, EventBus } from "../events/event-system";
+import { EventBus } from "../events/event-system";
 
 interface EngineDependencies {
   store: InMemoryStore;
   dailyLogRule: DailyLogRule;
   pmsTaskRule: PmsTaskRule;
+  defectRule: DefectRule;
   markComplianceAction: MarkComplianceAction;
   notifyMeoAction: NotifyMeoAction;
   escalateCoAction: EscalateCoAction;
+  checkTaskAction: CheckTaskAction;
   createPmsTaskAction: CreatePmsTaskAction;
+  createDefectTaskAction: CreateDefectTaskAction;
   markPmsTaskOverdueAction: MarkPmsTaskOverdueAction;
   replanPmsTaskAction: ReplanPmsTaskAction;
   notifyPmsSupervisorAction: NotifyPmsSupervisorAction;
+  escalateDefectToMccAction: EscalateDefectToMccAction;
+  escalateDefectToLogComdAction: EscalateDefectToLogComdAction;
   eventBus: EventBus;
 }
 
@@ -34,9 +44,8 @@ export class ComplianceEngine {
     });
   }
 
-  routeEvent(event: AppEvent): void {
-    const engineEvent = this.toEngineEvent(event);
-    const decision = this.evaluate(engineEvent);
+  routeEvent(event: EngineEvent): void {
+    const decision = this.evaluate(event);
 
     for (const command of decision.commands) {
       this.dispatch(command);
@@ -68,8 +77,20 @@ export class ComplianceEngine {
           this.dependencies.store,
         );
         return;
+      case "CHECK_TASK":
+        this.dependencies.checkTaskAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        return;
       case "CREATE_PMS_TASK":
         this.dependencies.createPmsTaskAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        return;
+      case "CREATE_DEFECT_TASK":
+        this.dependencies.createDefectTaskAction.execute(
           command,
           this.dependencies.store,
         );
@@ -88,6 +109,18 @@ export class ComplianceEngine {
         return;
       case "NOTIFY_PMS_SUPERVISOR":
         this.dependencies.notifyPmsSupervisorAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        return;
+      case "ESCALATE_DEFECT_TO_MCC":
+        this.dependencies.escalateDefectToMccAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        return;
+      case "ESCALATE_DEFECT_TO_LOG_COMD":
+        this.dependencies.escalateDefectToLogComdAction.execute(
           command,
           this.dependencies.store,
         );
@@ -113,33 +146,15 @@ export class ComplianceEngine {
           event,
           this.dependencies.store,
         );
+      case "DEFECT_REPORTED":
+      case "DEFECT_EVALUATION":
+        return this.dependencies.defectRule.evaluate(
+          event,
+          this.dependencies.store,
+        );
       default: {
         const exhaustiveCheck: never = event.type;
         throw new Error(`Unsupported engine event: ${exhaustiveCheck}`);
-      }
-    }
-  }
-
-  private toEngineEvent(event: AppEvent): EngineEvent {
-    switch (event.name) {
-      case "DAILY_LOG_CHECK_DUE":
-      case "DAILY_LOG_ESCALATION_DUE":
-      case "PMS_TASK_GENERATE":
-      case "PMS_TASK_CHECK":
-        return {
-          type: event.name,
-          businessDate: event.payload.businessDate,
-          occurredAt: event.occurredAt,
-          ...(event.payload.taskId ? { taskId: event.payload.taskId } : {}),
-          ...(event.payload.taskTitle ? { taskTitle: event.payload.taskTitle } : {}),
-          ...(event.payload.dueDate ? { dueDate: event.payload.dueDate } : {}),
-          ...(event.payload.assignedRole
-            ? { assignedRole: event.payload.assignedRole }
-            : {}),
-        };
-      default: {
-        const exhaustiveCheck: never = event.name;
-        throw new Error(`Unsupported event: ${exhaustiveCheck}`);
       }
     }
   }

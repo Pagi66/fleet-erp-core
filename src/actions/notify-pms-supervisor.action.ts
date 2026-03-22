@@ -6,6 +6,16 @@ export class NotifyPmsSupervisorAction {
     if (!command.taskId) {
       throw new Error("NOTIFY_PMS_SUPERVISOR command is missing taskId");
     }
+    const task = store.getTask(command.taskId);
+    if (!task) {
+      return;
+    }
+    if (
+      task.lastNotifiedAt !== null &&
+      (task.lastOverdueAt === null || task.lastNotifiedAt >= task.lastOverdueAt)
+    ) {
+      return;
+    }
 
     store.recordTaskNotification(command.taskId, command.issuedAt);
   }

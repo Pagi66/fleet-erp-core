@@ -1,26 +1,36 @@
 export type LogType = "ENGINE_ROOM_REGISTER" | "EQUIPMENT_OPERATION_RECORD";
 
-export type RoleId = "MEO" | "CO" | "MCC";
+export type RoleId = "MEO" | "CO" | "MCC" | "LOG_COMD";
 
 export type EngineEventType =
   | "DAILY_LOG_CHECK_DUE"
   | "DAILY_LOG_ESCALATION_DUE"
   | "PMS_TASK_GENERATE"
-  | "PMS_TASK_CHECK";
+  | "PMS_TASK_CHECK"
+  | "DEFECT_REPORTED"
+  | "DEFECT_EVALUATION";
 
 export type ActionType =
   | "MARK_COMPLIANT"
   | "MARK_NON_COMPLIANT"
   | "NOTIFY_MEO"
   | "ESCALATE_TO_CO"
+  | "CHECK_TASK"
   | "CREATE_PMS_TASK"
   | "MARK_PMS_TASK_OVERDUE"
   | "REPLAN_PMS_TASK"
-  | "NOTIFY_PMS_SUPERVISOR";
+  | "NOTIFY_PMS_SUPERVISOR"
+  | "CREATE_DEFECT_TASK"
+  | "ESCALATE_DEFECT_TO_MCC"
+  | "ESCALATE_DEFECT_TO_LOG_COMD";
 
-export type TaskKind = "PMS";
+export type TaskKind = "PMS" | "DEFECT";
 
 export type TaskStatus = "PENDING" | "COMPLETED" | "OVERDUE";
+
+export type TaskSeverity = "ROUTINE" | "URGENT" | "CRITICAL" | null;
+
+export type EscalationLevel = "NONE" | "MCC" | "LOG_COMD";
 
 export type TaskHistoryType =
   | "CREATED"
@@ -28,7 +38,8 @@ export type TaskHistoryType =
   | "STATUS_CHANGED"
   | "REPLANNED"
   | "NOTIFIED"
-  | "COMPLETED";
+  | "COMPLETED"
+  | "ESCALATED";
 
 export interface LogRecord {
   businessDate: string;
@@ -70,14 +81,26 @@ export interface Task {
   replannedFromDueDate: string | null;
   replannedToDueDate: string | null;
   lastNotifiedAt: string | null;
+  ettrDays: number | null;
+  severity: TaskSeverity;
+  escalationLevel: EscalationLevel;
+  escalatedAt: string | null;
+}
+
+export interface TaskStateSnapshot {
+  status: TaskStatus;
+  escalationLevel: EscalationLevel;
+  dueDate: string;
+  lastNotifiedAt: string | null;
 }
 
 export interface TaskHistoryEntry {
   taskId: string;
-  type: TaskHistoryType;
-  occurredAt: string;
-  status: TaskStatus;
-  note: string;
+  timestamp: string;
+  actionType: TaskHistoryType;
+  previousState: TaskStateSnapshot;
+  newState: TaskStateSnapshot;
+  actor: RoleId | "SYSTEM";
 }
 
 export interface EngineEvent {
@@ -88,6 +111,9 @@ export interface EngineEvent {
   taskTitle?: string;
   dueDate?: string;
   assignedRole?: RoleId;
+  taskKind?: TaskKind;
+  ettrDays?: number;
+  severity?: TaskSeverity;
 }
 
 export interface ActionCommand {
@@ -100,6 +126,9 @@ export interface ActionCommand {
   taskTitle?: string;
   dueDate?: string;
   assignedRole?: RoleId;
+  taskKind?: TaskKind;
+  ettrDays?: number;
+  severity?: TaskSeverity;
 }
 
 export interface RuleDecision {
@@ -112,7 +141,8 @@ export interface RuleDecision {
     | "NO_CHANGE"
     | "TASK_CREATED"
     | "TASK_COMPLETED"
-    | "TASK_OVERDUE";
+    | "TASK_OVERDUE"
+    | "TASK_ESCALATED";
   missingLogs: LogType[];
   commands: ActionCommand[];
 }

@@ -1,27 +1,23 @@
-import { AppEvent } from "./event-system";
+import { EngineEvent } from "../core/types";
 
 export function createDailyLogCheckDueEvent(
   businessDate: string,
   occurredAt: string
-): AppEvent {
+): EngineEvent {
   return {
-    name: "DAILY_LOG_CHECK_DUE",
+    type: "DAILY_LOG_CHECK_DUE",
+    businessDate,
     occurredAt,
-    payload: {
-      businessDate,
-    },
   };
 }
 
 export function createDailyLogEscalationDueEvent(
   businessDate: string,
   occurredAt: string
-): AppEvent {
+): EngineEvent {
   return {
-    name: "DAILY_LOG_ESCALATION_DUE",
+    type: "DAILY_LOG_ESCALATION_DUE",
+    businessDate,
     occurredAt,
-    payload: {
-      businessDate,
-    },
   };
 }

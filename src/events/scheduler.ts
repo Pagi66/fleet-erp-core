@@ -1,10 +1,14 @@
 import cron, { ScheduledTask } from "node-cron";
-import { RoleId } from "../core/types";
+import { RoleId, TaskSeverity } from "../core/types";
 import {
   createDailyLogCheckDueEvent,
   createDailyLogEscalationDueEvent,
 } from "./log-events";
 import { EventBus } from "./event-system";
+import {
+  createDefectEvaluationEvent,
+  createDefectReportedEvent,
+} from "./defect-events";
 import { createPmsTaskCheckEvent, createPmsTaskGenerateEvent } from "./pms-events";
 
 export class EngineScheduler {
@@ -87,6 +91,40 @@ export class EngineScheduler {
   ): void {
     this.eventBus.emit(
       createPmsTaskCheckEvent(
+        taskId,
+        businessDate,
+        occurredAt ?? new Date().toISOString(),
+      ),
+    );
+  }
+
+  triggerDefectReported(
+    taskId: string,
+    taskTitle: string,
+    businessDate: string,
+    ettrDays: number,
+    severity: TaskSeverity,
+    occurredAt?: string,
+  ): void {
+    this.eventBus.emit(
+      createDefectReportedEvent(
+        taskId,
+        taskTitle,
+        businessDate,
+        ettrDays,
+        severity,
+        occurredAt ?? new Date().toISOString(),
+      ),
+    );
+  }
+
+  triggerDefectEvaluation(
+    taskId: string,
+    businessDate: string,
+    occurredAt?: string,
+  ): void {
+    this.eventBus.emit(
+      createDefectEvaluationEvent(
         taskId,
         businessDate,
         occurredAt ?? new Date().toISOString(),

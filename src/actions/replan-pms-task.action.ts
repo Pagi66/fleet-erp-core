@@ -13,6 +13,9 @@ export class ReplanPmsTaskAction {
     }
 
     const nextDueDate = addOneDay(task.dueDate);
+    if (task.dueDate === nextDueDate) {
+      return;
+    }
 
     store.replanTask(command.taskId, nextDueDate, command.issuedAt);
   }

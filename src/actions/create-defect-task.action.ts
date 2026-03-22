@@ -1,10 +1,10 @@
 import { InMemoryStore } from "../core/store";
 import { ActionCommand, Task } from "../core/types";
 
-export class CreatePmsTaskAction {
+export class CreateDefectTaskAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
-    if (!command.taskId || !command.taskTitle || !command.dueDate || !command.assignedRole) {
-      throw new Error("CREATE_PMS_TASK command is missing required task fields");
+    if (!command.taskId || !command.taskTitle) {
+      throw new Error("CREATE_DEFECT_TASK command is missing required task fields");
     }
     if (store.getTask(command.taskId)) {
       return;
@@ -12,11 +12,11 @@ export class CreatePmsTaskAction {
 
     const task: Task = {
       id: command.taskId,
-      kind: "PMS",
+      kind: "DEFECT",
       title: command.taskTitle,
       businessDate: command.businessDate,
-      dueDate: command.dueDate,
-      assignedRole: command.assignedRole,
+      dueDate: command.businessDate,
+      assignedRole: command.assignedRole ?? "MEO",
       status: "PENDING",
       completedAt: null,
       lastCheckedAt: null,
@@ -24,8 +24,8 @@ export class CreatePmsTaskAction {
       replannedFromDueDate: null,
       replannedToDueDate: null,
       lastNotifiedAt: null,
-      ettrDays: null,
-      severity: null,
+      ettrDays: command.ettrDays ?? null,
+      severity: command.severity ?? "ROUTINE",
       escalationLevel: "NONE",
       escalatedAt: null,
     };

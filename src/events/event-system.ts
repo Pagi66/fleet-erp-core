@@ -1,24 +1,6 @@
-import { RoleId } from "../core/types";
+import { EngineEvent } from "../core/types";
 
-export type AppEventName =
-  | "DAILY_LOG_CHECK_DUE"
-  | "DAILY_LOG_ESCALATION_DUE"
-  | "PMS_TASK_GENERATE"
-  | "PMS_TASK_CHECK";
-
-export interface AppEvent {
-  name: AppEventName;
-  occurredAt: string;
-  payload: {
-    businessDate: string;
-    taskId?: string;
-    taskTitle?: string;
-    dueDate?: string;
-    assignedRole?: RoleId;
-  };
-}
-
-export type EventListener = (event: AppEvent) => void;
+export type EventListener = (event: EngineEvent) => void;
 
 export class EventBus {
   private readonly listeners = new Set<EventListener>();
@@ -30,7 +12,7 @@ export class EventBus {
     };
   }
 
-  emit(event: AppEvent): void {
+  emit(event: EngineEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }

@@ -36,20 +36,41 @@ export class PmsTaskRule {
       return this.createDecision(event, "NO_CHANGE", []);
     }
 
-    store.markTaskChecked(snapshot.task.id, event.occurredAt);
-
     if (snapshot.task.status === "COMPLETED") {
-      return this.createDecision(event, "TASK_COMPLETED", []);
+      return this.createDecision(event, "TASK_COMPLETED", [
+        {
+          type: "CHECK_TASK",
+          businessDate: event.businessDate,
+          issuedAt: event.occurredAt,
+          missingLogs: [],
+          taskId: snapshot.task.id,
+        },
+      ]);
     }
 
     const dueTime = Date.parse(snapshot.task.dueDate);
     const checkTime = Date.parse(event.occurredAt);
 
     if (checkTime <= dueTime) {
-      return this.createDecision(event, "NO_CHANGE", []);
+      return this.createDecision(event, "NO_CHANGE", [
+        {
+          type: "CHECK_TASK",
+          businessDate: event.businessDate,
+          issuedAt: event.occurredAt,
+          missingLogs: [],
+          taskId: snapshot.task.id,
+        },
+      ]);
     }
 
     return this.createDecision(event, "TASK_OVERDUE", [
+      {
+        type: "CHECK_TASK",
+        businessDate: event.businessDate,
+        issuedAt: event.occurredAt,
+        missingLogs: [],
+        taskId: snapshot.task.id,
+      },
       {
         type: "MARK_PMS_TASK_OVERDUE",
         businessDate: event.businessDate,

@@ -1,14 +1,25 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, resolve } from "path";
 import {
   DailyComplianceState,
   EscalationState,
   LogRecord,
   LogType,
   REQUIRED_DAILY_LOGS,
+  RoleId,
   StoreSnapshot,
   Task,
   TaskHistoryEntry,
+  TaskHistoryType,
+  TaskStateSnapshot,
   TaskSnapshot,
 } from "./types";
+
+interface PersistedStoreState {
+  tasks: Task[];
+  taskHistory: Array<[string, TaskHistoryEntry[]]>;
+  escalationState: Array<[string, EscalationState]>;
+}
 
 export class InMemoryStore {
   private readonly logsByDate = new Map<string, LogRecord[]>();
@@ -20,6 +31,13 @@ export class InMemoryStore {
   private readonly tasksById = new Map<string, Task>();
 
   private readonly taskHistoryById = new Map<string, TaskHistoryEntry[]>();
+
+  private readonly persistenceFilePath: string;
+
+  constructor(persistenceFilePath = resolve(process.cwd(), "data", "store-state.json")) {
+    this.persistenceFilePath = persistenceFilePath;
+    this.loadPersistedState();
+  }
 
   saveLog(record: LogRecord): void {
     const existing = this.logsByDate.get(record.businessDate) ?? [];
@@ -96,6 +114,7 @@ export class InMemoryStore {
       ...update,
     };
     this.escalationByDate.set(businessDate, next);
+    this.persistState();
     return next;
   }
 
@@ -107,15 +126,24 @@ export class InMemoryStore {
     };
   }
 
-  saveTask(task: Task): void {
+  createTask(task: Task, actor: RoleId | "SYSTEM" = "SYSTEM"): Task {
+    const existing = this.getTask(task.id);
+    if (existing) {
+      return existing;
+    }
+
     this.tasksById.set(task.id, task);
-    this.appendTaskHistory(task.id, {
-      taskId: task.id,
-      type: "CREATED",
-      occurredAt: task.businessDate,
-      status: task.status,
-      note: `Task created for ${task.kind}`,
-    });
+    const state = this.createStateSnapshot(task);
+    this.appendTaskHistory(
+      task.id,
+      "CREATED",
+      state,
+      state,
+      task.businessDate,
+      actor,
+    );
+    this.persistState();
+    return task;
   }
 
   getTask(taskId: string): Task | null {
@@ -128,37 +156,33 @@ export class InMemoryStore {
       return current;
     }
 
-    const next = this.updateTask(taskId, {
-      status: "COMPLETED",
-      completedAt: occurredAt,
-      lastCheckedAt: occurredAt,
-    });
-
-    this.appendTaskHistory(taskId, {
+    this.assertTaskStatusTransition(current.status, "COMPLETED");
+    return this.applyTaskUpdate(
       taskId,
-      type: "COMPLETED",
+      {
+        status: "COMPLETED",
+        completedAt: occurredAt,
+        lastCheckedAt: occurredAt,
+      },
+      "COMPLETED",
       occurredAt,
-      status: next.status,
-      note: "Task marked completed",
-    });
-
-    return next;
+    );
   }
 
-  markTaskChecked(taskId: string, occurredAt: string): Task {
-    const next = this.updateTask(taskId, {
-      lastCheckedAt: occurredAt,
-    });
+  recordTaskCheck(taskId: string, occurredAt: string): Task {
+    const current = this.requireTask(taskId);
+    if (current.lastCheckedAt === occurredAt) {
+      return current;
+    }
 
-    this.appendTaskHistory(taskId, {
+    return this.applyTaskUpdate(
       taskId,
-      type: "CHECKED",
+      {
+        lastCheckedAt: occurredAt,
+      },
+      "CHECKED",
       occurredAt,
-      status: next.status,
-      note: "Task evaluated by rule engine",
-    });
-
-    return next;
+    );
   }
 
   markTaskOverdue(taskId: string, occurredAt: string): Task {
@@ -166,70 +190,77 @@ export class InMemoryStore {
     if (current.status === "COMPLETED") {
       return current;
     }
+    if (current.status === "OVERDUE") {
+      return current;
+    }
 
-    const next = this.updateTask(taskId, {
-      status: "OVERDUE",
-      lastCheckedAt: occurredAt,
-      lastOverdueAt: occurredAt,
-    });
-
-    this.appendTaskHistory(taskId, {
+    this.assertTaskStatusTransition(current.status, "OVERDUE");
+    return this.applyTaskUpdate(
       taskId,
-      type: "STATUS_CHANGED",
+      {
+        status: "OVERDUE",
+        lastCheckedAt: occurredAt,
+        lastOverdueAt: occurredAt,
+      },
+      "STATUS_CHANGED",
       occurredAt,
-      status: next.status,
-      note: "Task marked overdue",
-    });
+    );
+  }
 
-    return next;
+  escalateTask(taskId: string, escalationLevel: "MCC" | "LOG_COMD", occurredAt: string): Task {
+    const current = this.requireTask(taskId);
+    if (current.escalationLevel === escalationLevel) {
+      return current;
+    }
+
+    this.assertEscalationTransition(current.escalationLevel, escalationLevel);
+    return this.applyTaskUpdate(
+      taskId,
+      {
+        escalationLevel,
+        escalatedAt: occurredAt,
+        lastNotifiedAt: occurredAt,
+      },
+      "ESCALATED",
+      occurredAt,
+    );
   }
 
   replanTask(taskId: string, nextDueDate: string, occurredAt: string): Task {
     const current = this.requireTask(taskId);
-    const next = this.updateTask(taskId, {
-      dueDate: nextDueDate,
-      replannedFromDueDate: current.dueDate,
-      replannedToDueDate: nextDueDate,
-      status: current.status === "COMPLETED" ? "COMPLETED" : "PENDING",
-    });
+    if (current.dueDate === nextDueDate) {
+      return current;
+    }
 
-    this.appendTaskHistory(taskId, {
+    return this.applyTaskUpdate(
       taskId,
-      type: "REPLANNED",
+      {
+        dueDate: nextDueDate,
+        replannedFromDueDate: current.dueDate,
+        replannedToDueDate: nextDueDate,
+      },
+      "REPLANNED",
       occurredAt,
-      status: next.status,
-      note: `Task replanned from ${current.dueDate} to ${nextDueDate}`,
-    });
-
-    return next;
+    );
   }
 
   recordTaskNotification(taskId: string, occurredAt: string): Task {
-    const next = this.updateTask(taskId, {
-      lastNotifiedAt: occurredAt,
-    });
-
-    this.appendTaskHistory(taskId, {
-      taskId,
-      type: "NOTIFIED",
-      occurredAt,
-      status: next.status,
-      note: "Task notification recorded",
-    });
-
-    return next;
-  }
-
-  updateTask(taskId: string, update: Partial<Task>): Task {
     const current = this.requireTask(taskId);
+    if (
+      current.lastNotifiedAt !== null &&
+      (current.lastOverdueAt === null || current.lastNotifiedAt >= current.lastOverdueAt)
+    ) {
+      return current;
+    }
 
-    const next: Task = {
-      ...current,
-      ...update,
-    };
-
-    this.tasksById.set(taskId, next);
-    return next;
+    return this.applyTaskUpdate(
+      taskId,
+      {
+        lastNotifiedAt: occurredAt,
+      },
+      "NOTIFIED",
+      occurredAt,
+    );
   }
 
   getTaskSnapshot(taskId: string): TaskSnapshot {
@@ -265,10 +296,164 @@ export class InMemoryStore {
 
   private appendTaskHistory(
     taskId: string,
-    entry: TaskHistoryEntry,
+    actionType: TaskHistoryType,
+    previousState: TaskStateSnapshot,
+    newState: TaskStateSnapshot,
+    timestamp: string,
+    actor: RoleId | "SYSTEM",
   ): void {
     const current = this.taskHistoryById.get(taskId) ?? [];
-    current.push(entry);
+    current.push({
+      taskId,
+      timestamp,
+      actionType,
+      previousState,
+      newState,
+      actor,
+    });
     this.taskHistoryById.set(taskId, current);
+  }
+
+  private applyTaskUpdate(
+    taskId: string,
+    update: Partial<Task>,
+    actionType: TaskHistoryType,
+    occurredAt: string,
+    actor: RoleId | "SYSTEM" = "SYSTEM",
+  ): Task {
+    const current = this.requireTask(taskId);
+    const previousState = this.createStateSnapshot(current);
+    const next: Task = {
+      ...current,
+      ...update,
+    };
+
+    this.tasksById.set(taskId, next);
+
+    const newState = this.createStateSnapshot(next);
+    if (!this.isSameState(previousState, newState)) {
+      this.appendTaskHistory(
+        taskId,
+        actionType,
+        previousState,
+        newState,
+        occurredAt,
+        actor,
+      );
+    }
+
+    this.persistState();
+    return next;
+  }
+
+  private createStateSnapshot(task: Task): TaskStateSnapshot {
+    return {
+      status: task.status,
+      escalationLevel: task.escalationLevel,
+      dueDate: task.dueDate,
+      lastNotifiedAt: task.lastNotifiedAt,
+    };
+  }
+
+  private isSameState(
+    left: TaskStateSnapshot,
+    right: TaskStateSnapshot,
+  ): boolean {
+    return (
+      left.status === right.status &&
+      left.escalationLevel === right.escalationLevel &&
+      left.dueDate === right.dueDate &&
+      left.lastNotifiedAt === right.lastNotifiedAt
+    );
+  }
+
+  private assertTaskStatusTransition(
+    current: Task["status"],
+    next: Task["status"],
+  ): void {
+    if (current === next) {
+      return;
+    }
+
+    const allowedTransitions: Record<Task["status"], Task["status"][]> = {
+      PENDING: ["COMPLETED", "OVERDUE"],
+      OVERDUE: ["COMPLETED"],
+      COMPLETED: [],
+    };
+
+    if (!allowedTransitions[current].includes(next)) {
+      throw new Error(`Invalid task status transition: ${current} -> ${next}`);
+    }
+  }
+
+  private assertEscalationTransition(
+    current: Task["escalationLevel"],
+    next: Task["escalationLevel"],
+  ): void {
+    const allowedTransitions: Record<Task["escalationLevel"], Task["escalationLevel"][]> = {
+      NONE: ["MCC", "LOG_COMD"],
+      MCC: ["LOG_COMD"],
+      LOG_COMD: [],
+    };
+
+    if (current === next) {
+      return;
+    }
+
+    if (!allowedTransitions[current].includes(next)) {
+      throw new Error(`Invalid escalation transition: ${current} -> ${next}`);
+    }
+  }
+
+  private formatRole(roleId: RoleId): string {
+    switch (roleId) {
+      case "LOG_COMD":
+        return "Log Comd";
+      default:
+        return roleId;
+    }
+  }
+
+  private loadPersistedState(): void {
+    if (!existsSync(this.persistenceFilePath)) {
+      return;
+    }
+
+    const raw = readFileSync(this.persistenceFilePath, "utf8");
+    if (raw.trim() === "") {
+      return;
+    }
+
+    const parsed = JSON.parse(raw) as PersistedStoreState;
+
+    this.tasksById.clear();
+    for (const task of parsed.tasks ?? []) {
+      this.tasksById.set(task.id, task);
+    }
+
+    this.taskHistoryById.clear();
+    for (const [taskId, history] of parsed.taskHistory ?? []) {
+      this.taskHistoryById.set(taskId, history);
+    }
+
+    this.escalationByDate.clear();
+    for (const [businessDate, escalationState] of parsed.escalationState ?? []) {
+      this.escalationByDate.set(businessDate, escalationState);
+    }
+  }
+
+  private persistState(): void {
+    const payload: PersistedStoreState = {
+      tasks: [...this.tasksById.values()],
+      taskHistory: [...this.taskHistoryById.entries()],
+      escalationState: [...this.escalationByDate.entries()],
+    };
+
+    mkdirSync(dirname(this.persistenceFilePath), { recursive: true });
+    writeFileSync(
+      this.persistenceFilePath,
+      JSON.stringify(payload, null, 2),
+      "utf8",
+    );
   }
 }
