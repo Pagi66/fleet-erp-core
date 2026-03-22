@@ -1,0 +1,4 @@
+- [ ] Build event trigger system (time based)
+- [ ] Implement daily log validation
+- [ ] Implement escalation logic
+- [ ] Create task model

@@ -1,0 +1,29 @@
+import { InMemoryStore } from "../core/store";
+import { ActionCommand } from "../core/types";
+
+export class ReplanPmsTaskAction {
+  execute(command: ActionCommand, store: InMemoryStore): void {
+    if (!command.taskId) {
+      throw new Error("REPLAN_PMS_TASK command is missing taskId");
+    }
+
+    const task = store.getTask(command.taskId);
+    if (!task) {
+      throw new Error(`Task not found: ${command.taskId}`);
+    }
+
+    const nextDueDate = addOneDay(task.dueDate);
+
+    store.updateTask(command.taskId, {
+      dueDate: nextDueDate,
+      replannedFromDueDate: task.dueDate,
+      replannedToDueDate: nextDueDate,
+    });
+  }
+}
+
+function addOneDay(isoDate: string): string {
+  const next = new Date(isoDate);
+  next.setDate(next.getDate() + 1);
+  return next.toISOString();
+}
