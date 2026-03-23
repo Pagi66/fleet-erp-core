@@ -1,5 +1,6 @@
 import { EscalateCoAction } from "./actions/escalate-co.action";
 import { CheckTaskAction } from "./actions/check-task.action";
+import { CompleteTaskAction } from "./actions/complete-task.action";
 import { CreateDefectTaskAction } from "./actions/create-defect-task.action";
 import { CreatePmsTaskAction } from "./actions/create-pms-task.action";
 import { EscalateDefectToLogComdAction } from "./actions/escalate-defect-to-log-comd.action";
@@ -29,6 +30,7 @@ export function createDailyLogEngineApp() {
   const notifyMeoAction = new NotifyMeoAction();
   const escalateCoAction = new EscalateCoAction();
   const checkTaskAction = new CheckTaskAction();
+  const completeTaskAction = new CompleteTaskAction();
   const createPmsTaskAction = new CreatePmsTaskAction();
   const createDefectTaskAction = new CreateDefectTaskAction();
   const markPmsTaskOverdueAction = new MarkPmsTaskOverdueAction();
@@ -63,6 +65,7 @@ export function createDailyLogEngineApp() {
     engine,
     eventBus,
     scheduler,
+    completeTaskAction,
     getHealthCheck: () => store.getHealthCheck(),
     shutdown: () => {
       store.flush();
@@ -79,6 +82,7 @@ if (require.main === module) {
     eventBus: app.eventBus,
     store: app.store,
     getHealthCheck: app.getHealthCheck,
+    completeTaskAction: app.completeTaskAction,
   });
 
   logger.stateChange({

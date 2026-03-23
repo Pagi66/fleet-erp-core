@@ -25,7 +25,12 @@ export class DailyLogRule {
 
       return this.createDecision(event, "NON_COMPLIANT", missingLogs, [
         this.createCommand("MARK_NON_COMPLIANT", event, missingLogs),
-        this.createCommand("NOTIFY_MEO", event, missingLogs, "MEO"),
+        this.createCommand(
+          "NOTIFY_MEO",
+          event,
+          missingLogs,
+          "MARINE_ENGINEERING_OFFICER",
+        ),
       ]);
     }
 
@@ -40,7 +45,12 @@ export class DailyLogRule {
     }
 
     return this.createDecision(event, "ESCALATE", missingLogs, [
-      this.createCommand("ESCALATE_TO_CO", event, missingLogs, "CO"),
+      this.createCommand(
+        "ESCALATE_TO_CO",
+        event,
+        missingLogs,
+        "COMMANDING_OFFICER",
+      ),
     ]);
   }
 

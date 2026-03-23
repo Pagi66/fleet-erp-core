@@ -22,7 +22,7 @@ export class DefectRule {
           taskId: event.taskId,
           taskTitle: event.taskTitle,
           taskKind: "DEFECT",
-          assignedRole: "MEO",
+          assignedRole: "MARINE_ENGINEERING_OFFICER",
           ...(typeof event.ettrDays === "number" ? { ettrDays: event.ettrDays } : {}),
           ...(typeof event.severity !== "undefined"
             ? { severity: event.severity }
@@ -37,7 +37,7 @@ export class DefectRule {
           issuedAt: event.occurredAt,
           missingLogs: [],
           taskId: event.taskId,
-          targetRole: "MCC",
+          targetRole: "FLEET_SUPPORT_GROUP",
         });
       }
 
@@ -65,8 +65,8 @@ export class DefectRule {
       ]);
     }
 
-    if (snapshot.task.severity === "CRITICAL") {
-      if (snapshot.task.escalationLevel === "LOG_COMD") {
+      if (snapshot.task.severity === "CRITICAL") {
+        if (snapshot.task.escalationLevel === "LOG_COMD") {
         return this.createDecision(event, "NO_CHANGE", [
           {
             type: "CHECK_TASK",
@@ -97,7 +97,10 @@ export class DefectRule {
           issuedAt: event.occurredAt,
           missingLogs: [],
           taskId: snapshot.task.id,
-          targetRole: actionType === "ESCALATE_DEFECT_TO_MCC" ? "MCC" : "LOG_COMD",
+          targetRole:
+            actionType === "ESCALATE_DEFECT_TO_MCC"
+              ? "FLEET_SUPPORT_GROUP"
+              : "LOGISTICS_COMMAND",
         },
       ]);
     }
@@ -129,7 +132,7 @@ export class DefectRule {
           issuedAt: event.occurredAt,
           missingLogs: [],
           taskId: snapshot.task.id,
-          targetRole: "LOG_COMD",
+          targetRole: "LOGISTICS_COMMAND",
         },
       ]);
     }

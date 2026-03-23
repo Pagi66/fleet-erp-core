@@ -1,11 +1,17 @@
 import { InMemoryStore } from "../core/store";
 import { ActionCommand } from "../core/types";
+import { logger } from "../core/logger";
+import { canExecuteAction } from "../core/rbac";
 
 export class NotifyPmsSupervisorAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
     if (!command.taskId) {
       throw new Error("NOTIFY_PMS_SUPERVISOR command is missing taskId");
     }
+    if (!command.actor) {
+      throw new Error("NOTIFY_PMS_SUPERVISOR command is missing actor");
+    }
+    const actor = command.actor;
     const task = store.getTask(command.taskId);
     if (!task) {
       return;
@@ -16,7 +22,15 @@ export class NotifyPmsSupervisorAction {
     ) {
       return;
     }
+    if (!canExecuteAction(actor, command, task)) {
+      logger.warn("rbac_rejected_action", {
+        taskId: command.taskId,
+        actionType: command.type,
+        status: actor,
+      });
+      throw new Error("Actor is not authorized to notify on PMS tasks");
+    }
 
-    store.recordTaskNotification(command.taskId, command.issuedAt);
+    store.recordTaskNotification(command.taskId, command.issuedAt, actor);
   }
 }

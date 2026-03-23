@@ -22,7 +22,10 @@ export class EngineScheduler {
         const now = new Date();
         const businessDate = formatDate(now);
         this.eventBus.emit(
-          createDailyLogCheckDueEvent(businessDate, now.toISOString()),
+          {
+            ...createDailyLogCheckDueEvent(businessDate, now.toISOString()),
+            actor: "SYSTEM",
+          },
         );
       }),
     );
@@ -32,7 +35,10 @@ export class EngineScheduler {
         const now = new Date();
         const businessDate = formatDate(previousDay(now));
         this.eventBus.emit(
-          createDailyLogEscalationDueEvent(businessDate, now.toISOString()),
+          {
+            ...createDailyLogEscalationDueEvent(businessDate, now.toISOString()),
+            actor: "SYSTEM",
+          },
         );
       }),
     );
@@ -48,19 +54,25 @@ export class EngineScheduler {
 
   triggerEndOfDayCheck(businessDate: string, occurredAt?: string): void {
     this.eventBus.emit(
-      createDailyLogCheckDueEvent(
-        businessDate,
-        occurredAt ?? new Date().toISOString(),
-      ),
+      {
+        ...createDailyLogCheckDueEvent(
+          businessDate,
+          occurredAt ?? new Date().toISOString(),
+        ),
+        actor: "SYSTEM",
+      },
     );
   }
 
   triggerMorningEscalation(businessDate: string, occurredAt?: string): void {
     this.eventBus.emit(
-      createDailyLogEscalationDueEvent(
-        businessDate,
-        occurredAt ?? new Date().toISOString(),
-      ),
+      {
+        ...createDailyLogEscalationDueEvent(
+          businessDate,
+          occurredAt ?? new Date().toISOString(),
+        ),
+        actor: "SYSTEM",
+      },
     );
   }
 
@@ -73,14 +85,17 @@ export class EngineScheduler {
     occurredAt?: string,
   ): void {
     this.eventBus.emit(
-      createPmsTaskGenerateEvent(
-        taskId,
-        taskTitle,
-        businessDate,
-        dueDate,
-        assignedRole,
-        occurredAt ?? new Date().toISOString(),
-      ),
+      {
+        ...createPmsTaskGenerateEvent(
+          taskId,
+          taskTitle,
+          businessDate,
+          dueDate,
+          assignedRole,
+          occurredAt ?? new Date().toISOString(),
+        ),
+        actor: "SYSTEM",
+      },
     );
   }
 
@@ -90,11 +105,14 @@ export class EngineScheduler {
     occurredAt?: string,
   ): void {
     this.eventBus.emit(
-      createPmsTaskCheckEvent(
-        taskId,
-        businessDate,
-        occurredAt ?? new Date().toISOString(),
-      ),
+      {
+        ...createPmsTaskCheckEvent(
+          taskId,
+          businessDate,
+          occurredAt ?? new Date().toISOString(),
+        ),
+        actor: "SYSTEM",
+      },
     );
   }
 
@@ -107,14 +125,17 @@ export class EngineScheduler {
     occurredAt?: string,
   ): void {
     this.eventBus.emit(
-      createDefectReportedEvent(
-        taskId,
-        taskTitle,
-        businessDate,
-        ettrDays,
-        severity,
-        occurredAt ?? new Date().toISOString(),
-      ),
+      {
+        ...createDefectReportedEvent(
+          taskId,
+          taskTitle,
+          businessDate,
+          ettrDays,
+          severity,
+          occurredAt ?? new Date().toISOString(),
+        ),
+        actor: "SYSTEM",
+      },
     );
   }
 
@@ -124,11 +145,14 @@ export class EngineScheduler {
     occurredAt?: string,
   ): void {
     this.eventBus.emit(
-      createDefectEvaluationEvent(
-        taskId,
-        businessDate,
-        occurredAt ?? new Date().toISOString(),
-      ),
+      {
+        ...createDefectEvaluationEvent(
+          taskId,
+          businessDate,
+          occurredAt ?? new Date().toISOString(),
+        ),
+        actor: "SYSTEM",
+      },
     );
   }
 }

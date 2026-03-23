@@ -1,10 +1,24 @@
 import { InMemoryStore } from "../core/store";
 import { ActionCommand, Task } from "../core/types";
+import { logger } from "../core/logger";
+import { canExecuteAction } from "../core/rbac";
 
 export class CreatePmsTaskAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
     if (!command.taskId || !command.taskTitle || !command.dueDate || !command.assignedRole) {
       throw new Error("CREATE_PMS_TASK command is missing required task fields");
+    }
+    if (!command.actor) {
+      throw new Error("CREATE_PMS_TASK command is missing actor");
+    }
+    const actor = command.actor;
+    if (!canExecuteAction(actor, command, null)) {
+      logger.warn("rbac_rejected_action", {
+        taskId: command.taskId,
+        actionType: command.type,
+        status: actor,
+      });
+      throw new Error("Actor is not authorized to create PMS tasks");
     }
     if (store.getTask(command.taskId)) {
       return;
@@ -30,6 +44,6 @@ export class CreatePmsTaskAction {
       escalatedAt: null,
     };
 
-    store.createTask(task);
+    store.createTask(task, actor);
   }
 }

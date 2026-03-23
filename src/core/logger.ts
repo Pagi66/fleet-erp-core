@@ -1,7 +1,8 @@
 import pino = require("pino");
+import { config } from "./config";
 
 const baseLogger = pino({
-  level: process.env.LOG_LEVEL ?? "info",
+  level: config.logLevel,
   timestamp: pino.stdTimeFunctions.isoTime,
 });
 

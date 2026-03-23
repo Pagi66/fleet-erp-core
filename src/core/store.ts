@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "fs";
 import { dirname, resolve } from "path";
+import { config } from "./config";
 import { logger } from "./logger";
 import {
   DailyComplianceState,
@@ -64,7 +65,7 @@ export class InMemoryStore {
 
   private lastPersistenceTimestamp: string | null = null;
 
-  constructor(persistenceFilePath = resolve(process.cwd(), "data", "store-state.json")) {
+  constructor(persistenceFilePath = config.persistenceFilePath) {
     this.persistenceFilePath = persistenceFilePath;
     this.backupFilePath = `${persistenceFilePath}.bak`;
     this.tempFilePath = `${persistenceFilePath}.tmp`;
@@ -170,7 +171,9 @@ export class InMemoryStore {
     };
   }
 
-  createTask(task: Task, actor: RoleId | "SYSTEM" = "SYSTEM"): Task {
+  createTask(task: Task, actor: RoleId): Task {
+    this.assertValidRole(task.assignedRole, "assignedRole");
+    this.assertValidRole(actor, "actor");
     const existing = this.getTask(task.id);
     if (existing) {
       return existing;
@@ -199,7 +202,8 @@ export class InMemoryStore {
     return this.tasksById.get(taskId) ?? null;
   }
 
-  completeTask(taskId: string, occurredAt: string): Task {
+  completeTask(taskId: string, occurredAt: string, actor: RoleId): Task {
+    this.assertValidRole(actor, "actor");
     const current = this.requireTask(taskId);
     if (current.status === "COMPLETED") {
       return current;
@@ -215,10 +219,12 @@ export class InMemoryStore {
       },
       "COMPLETED",
       occurredAt,
+      actor,
     );
   }
 
-  recordTaskCheck(taskId: string, occurredAt: string): Task {
+  recordTaskCheck(taskId: string, occurredAt: string, actor: RoleId): Task {
+    this.assertValidRole(actor, "actor");
     const current = this.requireTask(taskId);
     if (current.lastCheckedAt === occurredAt) {
       return current;
@@ -231,10 +237,12 @@ export class InMemoryStore {
       },
       "CHECKED",
       occurredAt,
+      actor,
     );
   }
 
-  markTaskOverdue(taskId: string, occurredAt: string): Task {
+  markTaskOverdue(taskId: string, occurredAt: string, actor: RoleId): Task {
+    this.assertValidRole(actor, "actor");
     const current = this.requireTask(taskId);
     if (current.status === "COMPLETED" || current.status === "OVERDUE") {
       return current;
@@ -250,6 +258,7 @@ export class InMemoryStore {
       },
       "STATUS_CHANGED",
       occurredAt,
+      actor,
     );
   }
 
@@ -257,7 +266,9 @@ export class InMemoryStore {
     taskId: string,
     escalationLevel: "MCC" | "LOG_COMD",
     occurredAt: string,
+    actor: RoleId,
   ): Task {
+    this.assertValidRole(actor, "actor");
     const current = this.requireTask(taskId);
     if (current.escalationLevel === escalationLevel) {
       return current;
@@ -273,10 +284,12 @@ export class InMemoryStore {
       },
       "ESCALATED",
       occurredAt,
+      actor,
     );
   }
 
-  replanTask(taskId: string, nextDueDate: string, occurredAt: string): Task {
+  replanTask(taskId: string, nextDueDate: string, occurredAt: string, actor: RoleId): Task {
+    this.assertValidRole(actor, "actor");
     const current = this.requireTask(taskId);
     if (current.dueDate === nextDueDate) {
       return current;
@@ -291,10 +304,12 @@ export class InMemoryStore {
       },
       "REPLANNED",
       occurredAt,
+      actor,
     );
   }
 
-  recordTaskNotification(taskId: string, occurredAt: string): Task {
+  recordTaskNotification(taskId: string, occurredAt: string, actor: RoleId): Task {
+    this.assertValidRole(actor, "actor");
     const current = this.requireTask(taskId);
     if (
       current.lastNotifiedAt !== null &&
@@ -310,6 +325,7 @@ export class InMemoryStore {
       },
       "NOTIFIED",
       occurredAt,
+      actor,
     );
   }
 
@@ -350,7 +366,7 @@ export class InMemoryStore {
   seedDailyLogs(
     businessDate: string,
     logTypes: LogType[],
-    submittedByRole: "MEO" = "MEO",
+    submittedByRole: "MARINE_ENGINEERING_OFFICER" = "MARINE_ENGINEERING_OFFICER",
   ): void {
     const submittedAt = new Date().toISOString();
     for (const logType of logTypes) {
@@ -402,7 +418,7 @@ export class InMemoryStore {
     update: Partial<Task>,
     actionType: TaskHistoryType,
     occurredAt: string,
-    actor: RoleId | "SYSTEM" = "SYSTEM",
+    actor: RoleId,
   ): Task {
     const current = this.requireTask(taskId);
     const previousState = this.createStateSnapshot(current);
@@ -485,6 +501,16 @@ export class InMemoryStore {
 
     if (!allowedTransitions[current].includes(next)) {
       throw new Error(`Invalid escalation transition: ${current} -> ${next}`);
+    }
+  }
+
+  private assertValidRole(role: RoleId, fieldName: string): void {
+    if (!this.isRoleId(role)) {
+      logger.error("role_validation_failed", new Error(`Invalid ${fieldName}`), {
+        actionType: fieldName,
+        status: String(role),
+      });
+      throw new Error(`Invalid ${fieldName}: ${String(role)}`);
     }
   }
 
@@ -684,10 +710,12 @@ export class InMemoryStore {
 
   private isRoleId(value: unknown): value is RoleId {
     return (
-      value === "MEO" ||
-      value === "CO" ||
-      value === "MCC" ||
-      value === "LOG_COMD"
+      value === "COMMANDING_OFFICER" ||
+      value === "MARINE_ENGINEERING_OFFICER" ||
+      value === "WEAPON_ELECTRICAL_OFFICER" ||
+      value === "FLEET_SUPPORT_GROUP" ||
+      value === "LOGISTICS_COMMAND" ||
+      value === "SYSTEM"
     );
   }
 

@@ -1,6 +1,12 @@
 export type LogType = "ENGINE_ROOM_REGISTER" | "EQUIPMENT_OPERATION_RECORD";
 
-export type RoleId = "MEO" | "CO" | "MCC" | "LOG_COMD";
+export type RoleId =
+  | "COMMANDING_OFFICER"
+  | "MARINE_ENGINEERING_OFFICER"
+  | "WEAPON_ELECTRICAL_OFFICER"
+  | "FLEET_SUPPORT_GROUP"
+  | "LOGISTICS_COMMAND"
+  | "SYSTEM";
 
 export type EngineEventType =
   | "DAILY_LOG_CHECK_DUE"
@@ -107,6 +113,7 @@ export interface EngineEvent {
   type: EngineEventType;
   businessDate: string;
   occurredAt: string;
+  actor?: RoleId;
   taskId?: string;
   taskTitle?: string;
   dueDate?: string;
@@ -122,6 +129,7 @@ export interface ActionCommand {
   issuedAt: string;
   missingLogs: LogType[];
   targetRole?: RoleId;
+  actor?: RoleId;
   taskId?: string;
   taskTitle?: string;
   dueDate?: string;

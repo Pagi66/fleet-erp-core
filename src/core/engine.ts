@@ -10,6 +10,7 @@ import { NotifyMeoAction } from "../actions/notify-meo.action";
 import { NotifyPmsSupervisorAction } from "../actions/notify-pms-supervisor.action";
 import { ReplanPmsTaskAction } from "../actions/replan-pms-task.action";
 import { ActionCommand, EngineEvent } from "./types";
+import { config } from "./config";
 import { logger } from "./logger";
 import { InMemoryStore } from "./store";
 import { DailyLogRule } from "../rules/daily-log.rule";
@@ -74,7 +75,13 @@ export class ComplianceEngine {
       });
 
       for (const command of decision.commands) {
-        this.dispatch(command, event.type);
+        this.dispatch(
+          {
+            ...command,
+            actor: command.actor ?? event.actor ?? "SYSTEM",
+          },
+          event.type,
+        );
       }
     } catch (error) {
       logger.error("event_handling_failed", error, {
@@ -242,7 +249,7 @@ export class ComplianceEngine {
     const now = Date.now();
     const isDuplicate =
       this.lastEventKey === eventKey &&
-      now - this.lastEventAtMs < 50;
+      now - this.lastEventAtMs < config.eventDebounceWindowMs;
 
     this.lastEventKey = eventKey;
     this.lastEventAtMs = now;
