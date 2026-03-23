@@ -10,9 +10,11 @@ import { NotifyMeoAction } from "./actions/notify-meo.action";
 import { NotifyPmsSupervisorAction } from "./actions/notify-pms-supervisor.action";
 import { ReplanPmsTaskAction } from "./actions/replan-pms-task.action";
 import { ComplianceEngine } from "./core/engine";
+import { logger } from "./core/logger";
 import { InMemoryStore } from "./core/store";
 import { EventBus } from "./events/event-system";
 import { EngineScheduler } from "./events/scheduler";
+import { startHttpServer } from "./http/server";
 import { DailyLogRule } from "./rules/daily-log.rule";
 import { DefectRule } from "./rules/defect.rule";
 import { PmsTaskRule } from "./rules/pms-task.rule";
@@ -61,10 +63,54 @@ export function createDailyLogEngineApp() {
     engine,
     eventBus,
     scheduler,
+    getHealthCheck: () => store.getHealthCheck(),
+    shutdown: () => {
+      store.flush();
+      scheduler.stop();
+      engine.stop();
+    },
   };
 }
 
 if (require.main === module) {
   const app = createDailyLogEngineApp();
+  const health = app.getHealthCheck();
+  const server = startHttpServer({
+    eventBus: app.eventBus,
+    store: app.store,
+    getHealthCheck: app.getHealthCheck,
+  });
+
+  logger.stateChange({
+    eventType: "SYSTEM_STARTUP",
+    status: "RUNNING",
+    result: `tasks=${health.totalTasks},overdue=${health.overdueTasks},lastPersisted=${health.lastPersistenceTimestamp ?? "none"}`,
+  });
+
   app.scheduler.start();
+
+  const gracefulShutdown = (signal: "SIGINT" | "SIGTERM") => {
+    try {
+      logger.stateChange({
+        eventType: signal,
+        status: "SHUTTING_DOWN",
+      });
+      server.close();
+      app.shutdown();
+      logger.stateChange({
+        eventType: signal,
+        status: "STOPPED",
+      });
+      process.exit(0);
+    } catch (error) {
+      logger.error("graceful_shutdown_failed", error, {
+        eventType: signal,
+        status: "FAILED",
+      });
+      process.exit(1);
+    }
+  };
+
+  process.once("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
 }
