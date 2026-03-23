@@ -5,7 +5,7 @@ import { canExecuteAction } from "../core/rbac";
 
 export class CreateDefectTaskAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
-    if (!command.taskId || !command.taskTitle || !command.assignedRole) {
+    if (!command.shipId || !command.taskId || !command.taskTitle || !command.assignedRole) {
       throw new Error("CREATE_DEFECT_TASK command is missing required task fields");
     }
     if (!command.actor) {
@@ -26,6 +26,7 @@ export class CreateDefectTaskAction {
 
     const task: Task = {
       id: command.taskId,
+      shipId: command.shipId,
       kind: "DEFECT",
       title: command.taskTitle,
       businessDate: command.businessDate,

@@ -1,6 +1,7 @@
 import { EngineEvent, TaskSeverity } from "../core/types";
 
 export function createDefectReportedEvent(
+  shipId: string,
   taskId: string,
   taskTitle: string,
   businessDate: string,
@@ -12,6 +13,7 @@ export function createDefectReportedEvent(
     type: "DEFECT_REPORTED",
     businessDate,
     occurredAt,
+    shipId,
     taskId,
     taskTitle,
     taskKind: "DEFECT",
@@ -21,6 +23,7 @@ export function createDefectReportedEvent(
 }
 
 export function createDefectEvaluationEvent(
+  shipId: string,
   taskId: string,
   businessDate: string,
   occurredAt: string,
@@ -29,6 +32,7 @@ export function createDefectEvaluationEvent(
     type: "DEFECT_EVALUATION",
     businessDate,
     occurredAt,
+    shipId,
     taskId,
     taskKind: "DEFECT",
   };

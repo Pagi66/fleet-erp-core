@@ -4,7 +4,7 @@ import { ActionCommand, EngineEvent, RuleDecision } from "../core/types";
 export class PmsTaskRule {
   evaluate(event: EngineEvent, store: InMemoryStore): RuleDecision {
     if (event.type === "PMS_TASK_GENERATE") {
-      if (!event.taskId || !event.taskTitle || !event.dueDate || !event.assignedRole) {
+      if (!event.shipId || !event.taskId || !event.taskTitle || !event.dueDate || !event.assignedRole) {
         throw new Error("PMS_TASK_GENERATE event is missing required task fields");
       }
 
@@ -19,6 +19,7 @@ export class PmsTaskRule {
           businessDate: event.businessDate,
           issuedAt: event.occurredAt,
           missingLogs: [],
+          shipId: event.shipId,
           taskId: event.taskId,
           taskTitle: event.taskTitle,
           dueDate: event.dueDate,
@@ -27,7 +28,7 @@ export class PmsTaskRule {
       ]);
     }
 
-    if (!event.taskId) {
+    if (!event.shipId || !event.taskId) {
       throw new Error("PMS_TASK_CHECK event is missing taskId");
     }
 

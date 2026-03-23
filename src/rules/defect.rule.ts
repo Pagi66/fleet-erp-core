@@ -4,7 +4,7 @@ import { ActionCommand, EngineEvent, RuleDecision } from "../core/types";
 export class DefectRule {
   evaluate(event: EngineEvent, store: InMemoryStore): RuleDecision {
     if (event.type === "DEFECT_REPORTED") {
-      if (!event.taskId || !event.taskTitle) {
+      if (!event.shipId || !event.taskId || !event.taskTitle) {
         throw new Error("DEFECT_REPORTED event is missing task fields");
       }
 
@@ -19,6 +19,7 @@ export class DefectRule {
           businessDate: event.businessDate,
           issuedAt: event.occurredAt,
           missingLogs: [],
+          shipId: event.shipId,
           taskId: event.taskId,
           taskTitle: event.taskTitle,
           taskKind: "DEFECT",
@@ -44,7 +45,7 @@ export class DefectRule {
       return this.createDecision(event, "TASK_CREATED", commands);
     }
 
-    if (!event.taskId) {
+    if (!event.shipId || !event.taskId) {
       throw new Error("DEFECT_EVALUATION event is missing taskId");
     }
 

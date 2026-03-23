@@ -8,6 +8,8 @@ export type RoleId =
   | "LOGISTICS_COMMAND"
   | "SYSTEM";
 
+export type AssignedRoleId = Exclude<RoleId, "SYSTEM">;
+
 export type EngineEventType =
   | "DAILY_LOG_CHECK_DUE"
   | "DAILY_LOG_ESCALATION_DUE"
@@ -47,6 +49,12 @@ export type TaskHistoryType =
   | "COMPLETED"
   | "ESCALATED";
 
+export interface Ship {
+  id: string;
+  name: string;
+  classType: string;
+}
+
 export interface LogRecord {
   businessDate: string;
   logType: LogType;
@@ -75,11 +83,12 @@ export interface EscalationState {
 
 export interface Task {
   id: string;
+  shipId: string;
   kind: TaskKind;
   title: string;
   businessDate: string;
   dueDate: string;
-  assignedRole: RoleId;
+  assignedRole: AssignedRoleId;
   status: TaskStatus;
   completedAt: string | null;
   lastCheckedAt: string | null;
@@ -114,10 +123,11 @@ export interface EngineEvent {
   businessDate: string;
   occurredAt: string;
   actor?: RoleId;
+  shipId?: string;
   taskId?: string;
   taskTitle?: string;
   dueDate?: string;
-  assignedRole?: RoleId;
+  assignedRole?: AssignedRoleId;
   taskKind?: TaskKind;
   ettrDays?: number;
   severity?: TaskSeverity;
@@ -130,10 +140,11 @@ export interface ActionCommand {
   missingLogs: LogType[];
   targetRole?: RoleId;
   actor?: RoleId;
+  shipId?: string;
   taskId?: string;
   taskTitle?: string;
   dueDate?: string;
-  assignedRole?: RoleId;
+  assignedRole?: AssignedRoleId;
   taskKind?: TaskKind;
   ettrDays?: number;
   severity?: TaskSeverity;

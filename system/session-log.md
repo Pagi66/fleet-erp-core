@@ -89,3 +89,24 @@
 - Action performed: Enforced explicit `SYSTEM` actor on scheduler-emitted events, propagated event actor into automated command dispatch, added runtime role validation inside store lifecycle methods, and added explicit actor/RBAC rejection checks for remaining compliance actions. Cross-checked action/store call sites to confirm task state changes still route through validated store lifecycle methods only.
 - Files modified: `src/core/types.ts`, `src/events/scheduler.ts`, `src/core/engine.ts`, `src/core/store.ts`, `src/actions/mark-compliance.action.ts`, `src/actions/notify-meo.action.ts`, `src/actions/escalate-co.action.ts`
 - Result: complete
+
+### 2026-03-23T14:42:34.1763990+00:00
+- Task name: Append workflow tracking files
+- Selected context files: `context/index.md`
+- Action performed: Appended bookkeeping entries to the session log, handoff, and done trackers for the latest role-consistency validation request.
+- Files modified: `system/session-log.md`, `system/handoff.md`, `tasks/done.md`
+- Result: complete
+
+### 2026-03-23T14:45:32.9083792+00:00
+- Task name: Finalize role consistency validation and logging cleanup
+- Selected context files: `context/index.md`
+- Action performed: Narrowed task `assignedRole` to non-`SYSTEM` roles, aligned PMS event creation and HTTP validation with that restriction, confirmed scheduler automation still emits explicit `SYSTEM`, and re-audited actions/store paths to verify task state changes continue through validated store lifecycle methods only. Also confirmed no malformed placeholder paths remain in tracked project files.
+- Files modified: `src/core/types.ts`, `src/events/pms-events.ts`, `src/events/scheduler.ts`, `src/core/store.ts`, `src/http/server.ts`, `system/session-log.md`, `system/handoff.md`, `tasks/done.md`
+- Result: complete
+
+### 2026-03-23T14:51:02.8798497+00:00
+- Task name: Extend system for multi-ship task structure
+- Selected context files: `context/index.md`
+- Action performed: Added ship entity support and required `shipId` on tasks, task-producing events, and task creation actions; extended persistence and store validation for ship-aware tasks; added ship-filtered task retrieval in the store; and updated HTTP task query endpoints to require `shipId`. Engine routing and rule/action boundaries were preserved.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`, `src/events/pms-events.ts`, `src/events/defect-events.ts`, `src/events/scheduler.ts`, `src/rules/pms-task.rule.ts`, `src/rules/defect.rule.ts`, `src/actions/create-pms-task.action.ts`, `src/actions/create-defect-task.action.ts`, `src/http/server.ts`
+- Result: complete

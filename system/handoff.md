@@ -21,6 +21,9 @@
 - No active in-session implementation task pending after workflow logging setup.
 - Future work should continue appending to `system/session-log.md` and updating task trackers per turn.
 - Automated actions now rely on explicit `SYSTEM` actor injection from scheduler/event paths through engine dispatch; manual task completion uses explicit role input via HTTP.
+- Latest bookkeeping update appended to workflow tracking files for the completed role-consistency validation pass.
+- Final validation pass completed: task `assignedRole` now excludes `SYSTEM` across task model, persistence validation, PMS event creation, and HTTP input validation.
+- Multi-ship task scoping is now in place: task queries require `shipId`, and task-producing events carry `shipId`.
 
 ## Known Issues
 - Legacy empty placeholder files still exist from earlier scaffolding: `src/actions/logActions.ts`, `src/rules/logRules.ts`, and old empty directories/files outside the current concrete architecture.
@@ -32,3 +35,5 @@
 - Append a new action entry to `system/session-log.md` after every concrete change.
 - Update `tasks/in-progress.md` and `tasks/done.md` alongside each future task.
 - Preserve the invariant that task creation requires explicit `assignedRole`, scheduler automation emits `SYSTEM`, and task lifecycle methods require explicit validated `actor`.
+- Keep `SYSTEM` restricted to automation actor paths only, never as a task assignee.
+- Preserve the invariant that all PMS and defect task events include `shipId` and that HTTP task inspection stays ship-scoped.

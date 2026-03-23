@@ -11,12 +11,14 @@ import { dirname, resolve } from "path";
 import { config } from "./config";
 import { logger } from "./logger";
 import {
+  AssignedRoleId,
   DailyComplianceState,
   EscalationState,
   LogRecord,
   LogType,
   REQUIRED_DAILY_LOGS,
   RoleId,
+  Ship,
   StoreSnapshot,
   Task,
   TaskHistoryEntry,
@@ -25,10 +27,11 @@ import {
   TaskStateSnapshot,
 } from "./types";
 
-const STORE_STATE_VERSION = 1;
+const STORE_STATE_VERSION = 2;
 
 interface PersistedStoreState {
   version: number;
+  ships: Ship[];
   tasks: Task[];
   taskHistory: Array<[string, TaskHistoryEntry[]]>;
   escalationState: Array<[string, EscalationState]>;
@@ -47,6 +50,8 @@ export interface StoreHealthCheck {
 }
 
 export class InMemoryStore {
+  private readonly shipsById = new Map<string, Ship>();
+
   private readonly logsByDate = new Map<string, LogRecord[]>();
 
   private readonly complianceByDate = new Map<string, DailyComplianceState>();
@@ -172,7 +177,8 @@ export class InMemoryStore {
   }
 
   createTask(task: Task, actor: RoleId): Task {
-    this.assertValidRole(task.assignedRole, "assignedRole");
+    this.assertValidShipId(task.shipId);
+    this.assertValidAssignedRole(task.assignedRole, "assignedRole");
     this.assertValidRole(actor, "actor");
     const existing = this.getTask(task.id);
     if (existing) {
@@ -340,8 +346,33 @@ export class InMemoryStore {
     return [...this.tasksById.values()];
   }
 
+  getTasksByShip(shipId: string): Task[] {
+    this.assertValidShipId(shipId);
+    return this.getAllTasks().filter((task) => task.shipId === shipId);
+  }
+
   getOverdueTasks(): Task[] {
     return this.getAllTasks().filter((task) => task.status === "OVERDUE");
+  }
+
+  getOverdueTasksByShip(shipId: string): Task[] {
+    this.assertValidShipId(shipId);
+    return this.getOverdueTasks().filter((task) => task.shipId === shipId);
+  }
+
+  saveShip(ship: Ship): Ship {
+    this.assertValidShip(ship);
+    this.shipsById.set(ship.id, ship);
+    this.persistState();
+    return ship;
+  }
+
+  getShip(shipId: string): Ship | null {
+    return this.shipsById.get(shipId) ?? null;
+  }
+
+  getAllShips(): Ship[] {
+    return [...this.shipsById.values()];
   }
 
   flush(): void {
@@ -393,7 +424,7 @@ export class InMemoryStore {
     previousState: TaskStateSnapshot,
     newState: TaskStateSnapshot,
     timestamp: string,
-    actor: RoleId | "SYSTEM",
+    actor: RoleId,
   ): void {
     const current = this.taskHistoryById.get(taskId) ?? [];
     current.push({
@@ -514,6 +545,43 @@ export class InMemoryStore {
     }
   }
 
+  private assertValidAssignedRole(role: AssignedRoleId, fieldName: string): void {
+    if (!this.isAssignedRoleId(role)) {
+      logger.error("assigned_role_validation_failed", new Error(`Invalid ${fieldName}`), {
+        actionType: fieldName,
+        status: String(role),
+      });
+      throw new Error(`Invalid ${fieldName}: ${String(role)}`);
+    }
+  }
+
+  private assertValidShipId(shipId: string): void {
+    if (typeof shipId !== "string" || shipId.trim() === "") {
+      logger.error("ship_id_validation_failed", new Error("Invalid shipId"), {
+        actionType: "shipId",
+        status: String(shipId),
+      });
+      throw new Error(`Invalid shipId: ${String(shipId)}`);
+    }
+  }
+
+  private assertValidShip(ship: Ship): void {
+    if (
+      typeof ship.id !== "string" ||
+      ship.id.trim() === "" ||
+      typeof ship.name !== "string" ||
+      ship.name.trim() === "" ||
+      typeof ship.classType !== "string" ||
+      ship.classType.trim() === ""
+    ) {
+      logger.error("ship_validation_failed", new Error("Invalid ship"), {
+        actionType: "ship",
+        status: ship.id ?? "UNKNOWN",
+      });
+      throw new Error("Invalid ship");
+    }
+  }
+
   private loadPersistedState(): void {
     const loaded =
       this.tryLoadFromPath(this.persistenceFilePath)
@@ -527,6 +595,11 @@ export class InMemoryStore {
     const { state: persisted, path } = loaded;
 
     this.tasksById.clear();
+    this.shipsById.clear();
+    for (const ship of persisted.ships) {
+      this.shipsById.set(ship.id, ship);
+    }
+
     for (const task of persisted.tasks) {
       this.tasksById.set(task.id, task);
     }
@@ -592,6 +665,10 @@ export class InMemoryStore {
       return false;
     }
 
+    if (!Array.isArray(value.ships) || !value.ships.every((item) => this.isShip(item))) {
+      return false;
+    }
+
     if (
       !Array.isArray(value.taskHistory) ||
       !value.taskHistory.every((entry) => this.isTaskHistoryTuple(entry))
@@ -616,11 +693,13 @@ export class InMemoryStore {
 
     return (
       typeof value.id === "string" &&
+      typeof value.shipId === "string" &&
+      value.shipId.trim() !== "" &&
       (value.kind === "PMS" || value.kind === "DEFECT") &&
       typeof value.title === "string" &&
       typeof value.businessDate === "string" &&
       typeof value.dueDate === "string" &&
-      this.isRoleId(value.assignedRole) &&
+      this.isAssignedRoleId(value.assignedRole) &&
       (value.status === "PENDING" || value.status === "COMPLETED" || value.status === "OVERDUE") &&
       isNullableString(value.completedAt) &&
       isNullableString(value.lastCheckedAt) &&
@@ -637,6 +716,18 @@ export class InMemoryStore {
         value.escalationLevel === "MCC" ||
         value.escalationLevel === "LOG_COMD") &&
       isNullableString(value.escalatedAt)
+    );
+  }
+
+  private isShip(value: unknown): value is Ship {
+    return (
+      isRecord(value) &&
+      typeof value.id === "string" &&
+      value.id.trim() !== "" &&
+      typeof value.name === "string" &&
+      value.name.trim() !== "" &&
+      typeof value.classType === "string" &&
+      value.classType.trim() !== ""
     );
   }
 
@@ -719,6 +810,16 @@ export class InMemoryStore {
     );
   }
 
+  private isAssignedRoleId(value: unknown): value is AssignedRoleId {
+    return (
+      value === "COMMANDING_OFFICER" ||
+      value === "MARINE_ENGINEERING_OFFICER" ||
+      value === "WEAPON_ELECTRICAL_OFFICER" ||
+      value === "FLEET_SUPPORT_GROUP" ||
+      value === "LOGISTICS_COMMAND"
+    );
+  }
+
   private isTaskHistoryType(value: unknown): value is TaskHistoryType {
     return (
       value === "CREATED" ||
@@ -732,6 +833,7 @@ export class InMemoryStore {
   }
 
   private resetPersistedState(): void {
+    this.shipsById.clear();
     this.tasksById.clear();
     this.taskHistoryById.clear();
     this.escalationByDate.clear();
@@ -740,6 +842,7 @@ export class InMemoryStore {
   private persistState(): void {
     const payload: PersistedStoreState = {
       version: STORE_STATE_VERSION,
+      ships: [...this.shipsById.values()],
       tasks: [...this.tasksById.values()],
       taskHistory: [...this.taskHistoryById.entries()],
       escalationState: [...this.escalationByDate.entries()],

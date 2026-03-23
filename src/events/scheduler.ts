@@ -1,5 +1,5 @@
 import cron, { ScheduledTask } from "node-cron";
-import { RoleId, TaskSeverity } from "../core/types";
+import { AssignedRoleId, TaskSeverity } from "../core/types";
 import {
   createDailyLogCheckDueEvent,
   createDailyLogEscalationDueEvent,
@@ -77,16 +77,18 @@ export class EngineScheduler {
   }
 
   triggerPmsTaskGenerate(
+    shipId: string,
     taskId: string,
     taskTitle: string,
     businessDate: string,
     dueDate: string,
-    assignedRole: RoleId,
+    assignedRole: AssignedRoleId,
     occurredAt?: string,
   ): void {
     this.eventBus.emit(
       {
         ...createPmsTaskGenerateEvent(
+          shipId,
           taskId,
           taskTitle,
           businessDate,
@@ -100,6 +102,7 @@ export class EngineScheduler {
   }
 
   triggerPmsTaskCheck(
+    shipId: string,
     taskId: string,
     businessDate: string,
     occurredAt?: string,
@@ -107,6 +110,7 @@ export class EngineScheduler {
     this.eventBus.emit(
       {
         ...createPmsTaskCheckEvent(
+          shipId,
           taskId,
           businessDate,
           occurredAt ?? new Date().toISOString(),
@@ -117,6 +121,7 @@ export class EngineScheduler {
   }
 
   triggerDefectReported(
+    shipId: string,
     taskId: string,
     taskTitle: string,
     businessDate: string,
@@ -127,6 +132,7 @@ export class EngineScheduler {
     this.eventBus.emit(
       {
         ...createDefectReportedEvent(
+          shipId,
           taskId,
           taskTitle,
           businessDate,
@@ -140,6 +146,7 @@ export class EngineScheduler {
   }
 
   triggerDefectEvaluation(
+    shipId: string,
     taskId: string,
     businessDate: string,
     occurredAt?: string,
@@ -147,6 +154,7 @@ export class EngineScheduler {
     this.eventBus.emit(
       {
         ...createDefectEvaluationEvent(
+          shipId,
           taskId,
           businessDate,
           occurredAt ?? new Date().toISOString(),

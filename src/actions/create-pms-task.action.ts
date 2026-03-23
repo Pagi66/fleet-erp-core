@@ -5,7 +5,7 @@ import { canExecuteAction } from "../core/rbac";
 
 export class CreatePmsTaskAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
-    if (!command.taskId || !command.taskTitle || !command.dueDate || !command.assignedRole) {
+    if (!command.shipId || !command.taskId || !command.taskTitle || !command.dueDate || !command.assignedRole) {
       throw new Error("CREATE_PMS_TASK command is missing required task fields");
     }
     if (!command.actor) {
@@ -26,6 +26,7 @@ export class CreatePmsTaskAction {
 
     const task: Task = {
       id: command.taskId,
+      shipId: command.shipId,
       kind: "PMS",
       title: command.taskTitle,
       businessDate: command.businessDate,

@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, Server, ServerResponse } from "http";
 import { CompleteTaskAction } from "../actions/complete-task.action";
 import { config } from "../core/config";
 import { logger } from "../core/logger";
-import { EngineEvent, RoleId, Task } from "../core/types";
+import { AssignedRoleId, EngineEvent, RoleId, Task } from "../core/types";
 import { EventBus } from "../events/event-system";
 import { InMemoryStore } from "../core/store";
 
@@ -55,12 +55,24 @@ async function handleRequest(
   }
 
   if (method === "GET" && url.pathname === "/tasks") {
-    sendSuccess(response, dependencies.store.getAllTasks());
+    const shipId = url.searchParams.get("shipId");
+    if (!shipId) {
+      logRejectedRequest(request, "shipId is required");
+      sendError(response, 400, "shipId is required");
+      return;
+    }
+    sendSuccess(response, dependencies.store.getTasksByShip(shipId));
     return;
   }
 
   if (method === "GET" && url.pathname === "/tasks/overdue") {
-    sendSuccess(response, dependencies.store.getOverdueTasks());
+    const shipId = url.searchParams.get("shipId");
+    if (!shipId) {
+      logRejectedRequest(request, "shipId is required");
+      sendError(response, 400, "shipId is required");
+      return;
+    }
+    sendSuccess(response, dependencies.store.getOverdueTasksByShip(shipId));
     return;
   }
 
@@ -206,11 +218,25 @@ function validateEventPayload(
     return { success: false, error: "occurredAt is required" };
   }
 
+  if ("shipId" in value && typeof value.shipId !== "undefined") {
+    if (typeof value.shipId !== "string" || value.shipId.trim() === "") {
+      return { success: false, error: "shipId is invalid" };
+    }
+  }
+
   const baseEvent: EngineEvent = {
     type: eventType,
     businessDate: value.businessDate,
     occurredAt: value.occurredAt,
   };
+
+  if ("shipId" in value && typeof value.shipId !== "undefined") {
+    const shipId = value.shipId;
+    if (typeof shipId !== "string") {
+      return { success: false, error: "shipId is invalid" };
+    }
+    baseEvent.shipId = shipId;
+  }
 
   if ("taskId" in value && typeof value.taskId !== "undefined") {
     if (typeof value.taskId !== "string" || !/^[A-Za-z0-9_-]+$/.test(value.taskId)) {
@@ -280,19 +306,19 @@ function validateEventShape(event: EngineEvent): string | null {
     case "DAILY_LOG_ESCALATION_DUE":
       return null;
     case "PMS_TASK_GENERATE":
-      if (!event.taskId || !event.taskTitle || !event.dueDate || !event.assignedRole) {
-        return "PMS_TASK_GENERATE requires taskId, taskTitle, dueDate, and assignedRole";
+      if (!event.shipId || !event.taskId || !event.taskTitle || !event.dueDate || !event.assignedRole) {
+        return "PMS_TASK_GENERATE requires shipId, taskId, taskTitle, dueDate, and assignedRole";
       }
       return null;
     case "PMS_TASK_CHECK":
-      return event.taskId ? null : "PMS_TASK_CHECK requires taskId";
+      return event.shipId && event.taskId ? null : "PMS_TASK_CHECK requires shipId and taskId";
     case "DEFECT_REPORTED":
-      if (!event.taskId || !event.taskTitle) {
-        return "DEFECT_REPORTED requires taskId and taskTitle";
+      if (!event.shipId || !event.taskId || !event.taskTitle) {
+        return "DEFECT_REPORTED requires shipId, taskId, and taskTitle";
       }
       return null;
     case "DEFECT_EVALUATION":
-      return event.taskId ? null : "DEFECT_EVALUATION requires taskId";
+      return event.shipId && event.taskId ? null : "DEFECT_EVALUATION requires shipId and taskId";
     default:
       return "Unknown eventType";
   }
@@ -309,15 +335,18 @@ function isValidEventType(value: unknown): value is EngineEvent["type"] {
   );
 }
 
-function isValidAssignedRole(value: unknown): value is Task["assignedRole"] {
+function isValidAssignedRole(value: unknown): value is AssignedRoleId {
   return (
     value === "COMMANDING_OFFICER" ||
     value === "MARINE_ENGINEERING_OFFICER" ||
     value === "WEAPON_ELECTRICAL_OFFICER" ||
     value === "FLEET_SUPPORT_GROUP" ||
-    value === "LOGISTICS_COMMAND" ||
-    value === "SYSTEM"
+    value === "LOGISTICS_COMMAND"
   );
+}
+
+function isValidRole(value: unknown): value is RoleId {
+  return isValidAssignedRole(value) || value === "SYSTEM";
 }
 
 function logRejectedRequest(request: IncomingMessage, reason: string): void {
@@ -341,5 +370,5 @@ function extractRole(request: IncomingMessage, body: unknown): RoleId | null {
         ? body.role
         : null;
 
-  return isValidAssignedRole(candidate) ? candidate : null;
+  return isValidRole(candidate) ? candidate : null;
 }
