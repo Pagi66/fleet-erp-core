@@ -51,6 +51,8 @@ export class ComplianceEngine {
   }
 
   routeEvent(event: EngineEvent): void {
+    this.assertEventContext(event);
+
     if (this.isDuplicateEvent(event)) {
       logger.warn("duplicate_event_skipped", {
         eventType: event.type,
@@ -75,6 +77,7 @@ export class ComplianceEngine {
       });
 
       for (const command of decision.commands) {
+        this.assertCommandContext(command, event);
         this.dispatch(
           {
             ...command,
@@ -244,8 +247,93 @@ export class ComplianceEngine {
     }
   }
 
+  private assertEventContext(event: EngineEvent): void {
+    const validationError = this.getEventValidationError(event);
+    if (!validationError) {
+      return;
+    }
+
+    logger.error("event_context_validation_failed", new Error(validationError), {
+      eventType: event.type,
+      ...(event.taskId ? { taskId: event.taskId } : {}),
+      status: validationError,
+    });
+    throw new Error(validationError);
+  }
+
+  private getEventValidationError(event: EngineEvent): string | null {
+    switch (event.type) {
+      case "DAILY_LOG_CHECK_DUE":
+      case "DAILY_LOG_ESCALATION_DUE":
+        return !event.shipId ? `${event.type} requires shipId` : null;
+      case "PMS_TASK_GENERATE":
+        return !event.shipId
+          ? "PMS_TASK_GENERATE requires shipId"
+          : !event.taskId
+            ? "PMS_TASK_GENERATE requires taskId"
+            : !event.taskTitle
+              ? "PMS_TASK_GENERATE requires taskTitle"
+              : !event.dueDate
+                ? "PMS_TASK_GENERATE requires dueDate"
+                : !event.assignedRole
+                  ? "PMS_TASK_GENERATE requires assignedRole"
+                  : null;
+      case "PMS_TASK_CHECK":
+        return !event.shipId
+          ? "PMS_TASK_CHECK requires shipId"
+          : !event.taskId
+            ? "PMS_TASK_CHECK requires taskId"
+            : null;
+      case "DEFECT_REPORTED":
+        return !event.shipId
+          ? "DEFECT_REPORTED requires shipId"
+          : !event.taskId
+            ? "DEFECT_REPORTED requires taskId"
+            : !event.taskTitle
+              ? "DEFECT_REPORTED requires taskTitle"
+              : null;
+      case "DEFECT_EVALUATION":
+        return !event.shipId
+          ? "DEFECT_EVALUATION requires shipId"
+          : !event.taskId
+            ? "DEFECT_EVALUATION requires taskId"
+            : null;
+      default:
+        return null;
+    }
+  }
+
+  private assertCommandContext(command: ActionCommand, event: EngineEvent): void {
+    if (!event.shipId) {
+      return;
+    }
+    if (command.shipId && command.shipId !== event.shipId) {
+      logger.error("command_context_validation_failed", new Error("Command shipId mismatch"), {
+        eventType: event.type,
+        ...(command.taskId ? { taskId: command.taskId } : {}),
+        actionType: command.type,
+        status: `${event.shipId}->${command.shipId}`,
+      });
+      throw new Error(`Command ${command.type} shipId mismatch`);
+    }
+    if (!command.shipId && command.taskId) {
+      logger.error("command_context_validation_failed", new Error("Command missing shipId"), {
+        eventType: event.type,
+        ...(command.taskId ? { taskId: command.taskId } : {}),
+        actionType: command.type,
+        status: "MISSING_SHIP_ID",
+      });
+      throw new Error(`Command ${command.type} requires shipId`);
+    }
+  }
+
   private isDuplicateEvent(event: EngineEvent): boolean {
-    const eventKey = JSON.stringify(event);
+    const eventKey = JSON.stringify({
+      type: event.type,
+      shipId: event.shipId ?? "GLOBAL",
+      taskId: event.taskId ?? null,
+      businessDate: event.businessDate,
+    });
     const now = Date.now();
     const isDuplicate =
       this.lastEventKey === eventKey &&

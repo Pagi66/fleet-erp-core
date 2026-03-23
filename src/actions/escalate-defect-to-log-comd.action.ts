@@ -5,15 +5,23 @@ import { canExecuteAction } from "../core/rbac";
 
 export class EscalateDefectToLogComdAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
-    if (!command.taskId) {
-      throw new Error("ESCALATE_DEFECT_TO_LOG_COMD command is missing taskId");
+    if (!command.shipId || !command.taskId) {
+      throw new Error("ESCALATE_DEFECT_TO_LOG_COMD command is missing shipId or taskId");
     }
     if (!command.actor) {
       throw new Error("ESCALATE_DEFECT_TO_LOG_COMD command is missing actor");
     }
     const actor = command.actor;
-    const task = store.getTask(command.taskId);
-    if (!task || task.escalationLevel === "LOG_COMD") {
+    const task = store.getTaskInShip(command.taskId, command.shipId);
+    if (!task) {
+      logger.warn("ship_context_rejected_action", {
+        taskId: command.taskId,
+        actionType: command.type,
+        status: command.shipId,
+      });
+      throw new Error("Task does not exist in the provided ship context");
+    }
+    if (task.escalationLevel === "LOG_COMD") {
       return;
     }
     if (!canExecuteAction(actor, command, task)) {
@@ -26,5 +34,13 @@ export class EscalateDefectToLogComdAction {
     }
 
     store.escalateTask(command.taskId, "LOG_COMD", command.issuedAt, actor);
+    store.createNotification({
+      type: "ESCALATION",
+      shipId: command.shipId,
+      taskId: command.taskId,
+      message: `Defect escalated to LOGISTICS_COMMAND: ${task.title}`,
+      targetRole: "LOGISTICS_COMMAND",
+      timestamp: command.issuedAt,
+    });
   }
 }

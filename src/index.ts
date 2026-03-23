@@ -58,7 +58,10 @@ export function createDailyLogEngineApp() {
     eventBus,
   });
 
-  const scheduler = new EngineScheduler(eventBus);
+  const scheduler = new EngineScheduler(
+    eventBus,
+    () => store.getAllShips().map((ship) => ship.id),
+  );
 
   return {
     store,

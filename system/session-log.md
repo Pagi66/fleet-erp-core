@@ -110,3 +110,52 @@
 - Action performed: Added ship entity support and required `shipId` on tasks, task-producing events, and task creation actions; extended persistence and store validation for ship-aware tasks; added ship-filtered task retrieval in the store; and updated HTTP task query endpoints to require `shipId`. Engine routing and rule/action boundaries were preserved.
 - Files modified: `src/core/types.ts`, `src/core/store.ts`, `src/events/pms-events.ts`, `src/events/defect-events.ts`, `src/events/scheduler.ts`, `src/rules/pms-task.rule.ts`, `src/rules/defect.rule.ts`, `src/actions/create-pms-task.action.ts`, `src/actions/create-defect-task.action.ts`, `src/http/server.ts`
 - Result: complete
+
+### 2026-03-23T15:04:37.1210150+00:00
+- Task name: Lock ship isolation, persistence rejection logging, and ship existence checks
+- Selected context files: `context/index.md`
+- Action performed: Enforced engine rejection for task events without `shipId`, propagated `shipId` through PMS and defect task commands, added ship-context checks in task actions, rejected cross-ship task-id collisions, required ship existence before task creation, and added explicit persisted-state version mismatch plus migration-unavailable logging.
+- Files modified: `src/core/engine.ts`, `src/core/store.ts`, `src/rules/pms-task.rule.ts`, `src/rules/defect.rule.ts`, `src/actions/check-task.action.ts`, `src/actions/mark-pms-task-overdue.action.ts`, `src/actions/replan-pms-task.action.ts`, `src/actions/notify-pms-supervisor.action.ts`, `src/actions/escalate-defect-to-mcc.action.ts`, `src/actions/escalate-defect-to-log-comd.action.ts`, `src/actions/create-pms-task.action.ts`, `src/actions/create-defect-task.action.ts`
+- Result: complete
+
+### 2026-03-23T15:13:12.4868759+00:00
+- Task name: Close remaining correctness gaps in event and task-state handling
+- Selected context files: `context/index.md`
+- Action performed: Tightened engine event validation and ship-scoped deduplication keys, enforced command ship-context consistency during engine dispatch, extended task history with `shipId` and full task-state snapshots, added `parentTaskId` lineage for replanned tasks, updated task creation history timestamps to use action time, and extended store health output with per-ship metrics.
+- Files modified: `src/core/types.ts`, `src/core/engine.ts`, `src/core/store.ts`, `src/actions/create-pms-task.action.ts`, `src/actions/create-defect-task.action.ts`
+- Result: complete
+
+### 2026-03-23T15:19:13.7486264+00:00
+- Task name: Fix remaining daily-log correctness gaps
+- Selected context files: `context/index.md`
+- Action performed: Scoped daily log records, compliance state, and escalation state by `shipId` plus business date; enforced `shipId` on daily log events and commands; added no-op guards for duplicate daily-log notifications and escalations per ship/day; updated scheduler daily-log emission to emit per ship; and standardized HTTP 500 responses to the shared error envelope.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`, `src/core/engine.ts`, `src/rules/daily-log.rule.ts`, `src/actions/mark-compliance.action.ts`, `src/actions/notify-meo.action.ts`, `src/actions/escalate-co.action.ts`, `src/events/scheduler.ts`, `src/index.ts`, `src/http/server.ts`
+- Result: complete
+
+### 2026-03-23T15:24:05.4258998+00:00
+- Task name: Add in-app notification visibility
+- Selected context files: `context/index.md`
+- Action performed: Added persisted in-app notifications to the store, created notifications from existing overdue, escalation, missing-log, and task-completion action paths, and exposed HTTP endpoints for ship/role retrieval and read marking.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`, `src/actions/notify-meo.action.ts`, `src/actions/mark-pms-task-overdue.action.ts`, `src/actions/escalate-co.action.ts`, `src/actions/escalate-defect-to-mcc.action.ts`, `src/actions/escalate-defect-to-log-comd.action.ts`, `src/actions/complete-task.action.ts`, `src/http/server.ts`
+- Result: complete
+
+### 2026-03-23T15:28:47.0432392+00:00
+- Task name: Add notification-level idempotency
+- Selected context files: `context/index.md`
+- Action performed: Added persisted notification dedupe keys in the store, derived dedupe identity from ship, role, event context, task, and date, skipped duplicate notification creation with logging, and updated persisted notification validation for reload compatibility.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`
+- Result: complete
+
+### 2026-03-23T16:24:04.3496480+00:00
+- Task name: Align notification dedupe API with optional dedupeKey input
+- Selected context files: `context/index.md`
+- Action performed: Changed `Notification.dedupeKey` to optional, updated `createNotification(...)` to accept optional caller-provided dedupe keys while preserving store-generated fallback keys and duplicate-skip behavior, and relaxed persisted notification validation accordingly.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`
+- Result: complete
+
+### 2026-03-23T16:30:08.8507937+00:00
+- Task name: Refactor notifications to use explicit type
+- Selected context files: `context/index.md`
+- Action performed: Added explicit `type` to the notification model, switched store dedupe generation to use `input.type` instead of parsing the message, removed message-derived notification type logic, and updated notification creation call sites to pass concrete type strings.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`, `src/actions/notify-meo.action.ts`, `src/actions/mark-pms-task-overdue.action.ts`, `src/actions/escalate-co.action.ts`, `src/actions/escalate-defect-to-mcc.action.ts`, `src/actions/escalate-defect-to-log-comd.action.ts`, `src/actions/complete-task.action.ts`
+- Result: complete

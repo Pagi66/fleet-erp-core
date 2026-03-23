@@ -10,7 +10,11 @@ import { InMemoryStore } from "../core/store";
 
 export class DailyLogRule {
   evaluate(event: EngineEvent, store: InMemoryStore): RuleDecision {
-    const snapshot = store.getSnapshot(event.businessDate);
+    if (!event.shipId) {
+      throw new Error("Daily log event is missing shipId");
+    }
+
+    const snapshot = store.getSnapshot(event.shipId, event.businessDate);
     const presentLogs = this.collectPresentLogs(snapshot.logs);
     const missingLogs = REQUIRED_DAILY_LOGS.filter(
       (logType) => !presentLogs.includes(logType),
@@ -73,6 +77,7 @@ export class DailyLogRule {
       businessDate: event.businessDate,
       issuedAt: event.occurredAt,
       missingLogs,
+      shipId: event.shipId!,
       ...(targetRole ? { targetRole } : {}),
     };
   }

@@ -55,7 +55,20 @@ export interface Ship {
   classType: string;
 }
 
+export interface Notification {
+  id: string;
+  type: string;
+  dedupeKey?: string;
+  shipId: string;
+  taskId: string | null;
+  message: string;
+  targetRole: RoleId;
+  timestamp: string;
+  read: boolean;
+}
+
 export interface LogRecord {
+  shipId: string;
   businessDate: string;
   logType: LogType;
   submittedAt: string;
@@ -63,6 +76,7 @@ export interface LogRecord {
 }
 
 export interface DailyComplianceState {
+  shipId: string;
   businessDate: string;
   requiredLogs: LogType[];
   presentLogs: LogType[];
@@ -73,6 +87,7 @@ export interface DailyComplianceState {
 }
 
 export interface EscalationState {
+  shipId: string;
   businessDate: string;
   status: "NOT_ESCALATED" | "ESCALATED_TO_CO";
   reason: "MISSING_DAILY_LOGS" | null;
@@ -84,6 +99,7 @@ export interface EscalationState {
 export interface Task {
   id: string;
   shipId: string;
+  parentTaskId: string | null;
   kind: TaskKind;
   title: string;
   businessDate: string;
@@ -103,14 +119,27 @@ export interface Task {
 }
 
 export interface TaskStateSnapshot {
+  shipId: string;
+  parentTaskId: string | null;
+  kind: TaskKind;
+  assignedRole: AssignedRoleId;
   status: TaskStatus;
+  completedAt: string | null;
+  lastCheckedAt: string | null;
+  lastOverdueAt: string | null;
+  replannedFromDueDate: string | null;
+  replannedToDueDate: string | null;
   escalationLevel: EscalationLevel;
   dueDate: string;
   lastNotifiedAt: string | null;
+  ettrDays: number | null;
+  severity: TaskSeverity;
+  escalatedAt: string | null;
 }
 
 export interface TaskHistoryEntry {
   taskId: string;
+  shipId: string;
   timestamp: string;
   actionType: TaskHistoryType;
   previousState: TaskStateSnapshot;
@@ -142,6 +171,7 @@ export interface ActionCommand {
   actor?: RoleId;
   shipId?: string;
   taskId?: string;
+  parentTaskId?: string;
   taskTitle?: string;
   dueDate?: string;
   assignedRole?: AssignedRoleId;

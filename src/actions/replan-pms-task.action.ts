@@ -5,17 +5,22 @@ import { canExecuteAction } from "../core/rbac";
 
 export class ReplanPmsTaskAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
-    if (!command.taskId) {
-      throw new Error("REPLAN_PMS_TASK command is missing taskId");
+    if (!command.shipId || !command.taskId) {
+      throw new Error("REPLAN_PMS_TASK command is missing shipId or taskId");
     }
     if (!command.actor) {
       throw new Error("REPLAN_PMS_TASK command is missing actor");
     }
     const actor = command.actor;
 
-    const task = store.getTask(command.taskId);
+    const task = store.getTaskInShip(command.taskId, command.shipId);
     if (!task) {
-      throw new Error(`Task not found: ${command.taskId}`);
+      logger.warn("ship_context_rejected_action", {
+        taskId: command.taskId,
+        actionType: command.type,
+        status: command.shipId,
+      });
+      throw new Error(`Task not found in ship context: ${command.taskId}`);
     }
     if (!canExecuteAction(actor, command, task)) {
       logger.warn("rbac_rejected_action", {

@@ -20,13 +20,14 @@ export class CreateDefectTaskAction {
       });
       throw new Error("Actor is not authorized to create defect tasks");
     }
-    if (store.getTask(command.taskId)) {
+    if (store.getTaskInShip(command.taskId, command.shipId)) {
       return;
     }
 
     const task: Task = {
       id: command.taskId,
       shipId: command.shipId,
+      parentTaskId: command.parentTaskId ?? null,
       kind: "DEFECT",
       title: command.taskTitle,
       businessDate: command.businessDate,
@@ -45,6 +46,6 @@ export class CreateDefectTaskAction {
       escalatedAt: null,
     };
 
-    store.createTask(task, actor);
+    store.createTask(task, command.issuedAt, actor);
   }
 }

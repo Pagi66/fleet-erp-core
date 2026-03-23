@@ -19,6 +19,15 @@ export class CompleteTaskAction {
       throw new Error("Actor is not authorized to complete this task");
     }
 
-    return store.completeTask(taskId, new Date().toISOString(), actor);
+    const completed = store.completeTask(taskId, new Date().toISOString(), actor);
+    store.createNotification({
+      type: "TASK_COMPLETED",
+      shipId: completed.shipId,
+      taskId: completed.id,
+      message: `Task completed: ${completed.title}`,
+      targetRole: completed.assignedRole,
+      timestamp: completed.completedAt ?? new Date().toISOString(),
+    });
+    return completed;
   }
 }

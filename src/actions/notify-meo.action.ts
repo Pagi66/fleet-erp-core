@@ -5,6 +5,9 @@ import { canExecuteAction } from "../core/rbac";
 
 export class NotifyMeoAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
+    if (!command.shipId) {
+      throw new Error("NOTIFY_MEO command is missing shipId");
+    }
     if (!command.actor) {
       throw new Error("NOTIFY_MEO command is missing actor");
     }
@@ -16,8 +19,24 @@ export class NotifyMeoAction {
       throw new Error("Actor is not authorized to notify MEO");
     }
 
-    store.updateComplianceState(command.businessDate, {
+    const currentState = store.getOrCreateComplianceState(
+      command.shipId,
+      command.businessDate,
+    );
+    if (currentState.meoNotifiedAt !== null) {
+      return;
+    }
+
+    store.updateComplianceState(command.shipId, command.businessDate, {
       meoNotifiedAt: command.issuedAt,
+    });
+    store.createNotification({
+      type: "MISSING_DAILY_LOG",
+      shipId: command.shipId,
+      taskId: null,
+      message: `Missing daily logs for ${command.businessDate}`,
+      targetRole: "MARINE_ENGINEERING_OFFICER",
+      timestamp: command.issuedAt,
     });
   }
 }

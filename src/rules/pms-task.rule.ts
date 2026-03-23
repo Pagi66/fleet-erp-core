@@ -8,7 +8,7 @@ export class PmsTaskRule {
         throw new Error("PMS_TASK_GENERATE event is missing required task fields");
       }
 
-      const existingTask = store.getTask(event.taskId);
+      const existingTask = store.getTaskInShip(event.taskId, event.shipId);
       if (existingTask) {
         return this.createDecision(event, "NO_CHANGE", []);
       }
@@ -32,7 +32,7 @@ export class PmsTaskRule {
       throw new Error("PMS_TASK_CHECK event is missing taskId");
     }
 
-    const snapshot = store.getTaskSnapshot(event.taskId);
+    const snapshot = store.getTaskSnapshotInShip(event.taskId, event.shipId);
     if (!snapshot.task) {
       return this.createDecision(event, "NO_CHANGE", []);
     }
@@ -44,6 +44,7 @@ export class PmsTaskRule {
           businessDate: event.businessDate,
           issuedAt: event.occurredAt,
           missingLogs: [],
+          shipId: event.shipId,
           taskId: snapshot.task.id,
         },
       ]);
@@ -59,6 +60,7 @@ export class PmsTaskRule {
           businessDate: event.businessDate,
           issuedAt: event.occurredAt,
           missingLogs: [],
+          shipId: event.shipId,
           taskId: snapshot.task.id,
         },
       ]);
@@ -70,6 +72,7 @@ export class PmsTaskRule {
         businessDate: event.businessDate,
         issuedAt: event.occurredAt,
         missingLogs: [],
+        shipId: event.shipId,
         taskId: snapshot.task.id,
       },
       {
@@ -77,6 +80,7 @@ export class PmsTaskRule {
         businessDate: event.businessDate,
         issuedAt: event.occurredAt,
         missingLogs: [],
+        shipId: event.shipId,
         taskId: snapshot.task.id,
       },
       {
@@ -84,6 +88,7 @@ export class PmsTaskRule {
         businessDate: event.businessDate,
         issuedAt: event.occurredAt,
         missingLogs: [],
+        shipId: event.shipId,
         taskId: snapshot.task.id,
       },
       {
@@ -91,6 +96,7 @@ export class PmsTaskRule {
         businessDate: event.businessDate,
         issuedAt: event.occurredAt,
         missingLogs: [],
+        shipId: event.shipId,
         taskId: snapshot.task.id,
         targetRole: snapshot.task.assignedRole,
       },

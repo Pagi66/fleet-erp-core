@@ -5,16 +5,21 @@ import { canExecuteAction } from "../core/rbac";
 
 export class NotifyPmsSupervisorAction {
   execute(command: ActionCommand, store: InMemoryStore): void {
-    if (!command.taskId) {
-      throw new Error("NOTIFY_PMS_SUPERVISOR command is missing taskId");
+    if (!command.shipId || !command.taskId) {
+      throw new Error("NOTIFY_PMS_SUPERVISOR command is missing shipId or taskId");
     }
     if (!command.actor) {
       throw new Error("NOTIFY_PMS_SUPERVISOR command is missing actor");
     }
     const actor = command.actor;
-    const task = store.getTask(command.taskId);
+    const task = store.getTaskInShip(command.taskId, command.shipId);
     if (!task) {
-      return;
+      logger.warn("ship_context_rejected_action", {
+        taskId: command.taskId,
+        actionType: command.type,
+        status: command.shipId,
+      });
+      throw new Error("Task does not exist in the provided ship context");
     }
     if (
       task.lastNotifiedAt !== null &&

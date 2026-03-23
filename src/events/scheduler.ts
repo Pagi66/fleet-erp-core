@@ -14,19 +14,25 @@ import { createPmsTaskCheckEvent, createPmsTaskGenerateEvent } from "./pms-event
 export class EngineScheduler {
   private readonly tasks: ScheduledTask[] = [];
 
-  constructor(private readonly eventBus: EventBus) {}
+  constructor(
+    private readonly eventBus: EventBus,
+    private readonly getShipIds: () => string[],
+  ) {}
 
   start(): void {
     this.tasks.push(
       cron.schedule("59 23 * * *", () => {
         const now = new Date();
         const businessDate = formatDate(now);
-        this.eventBus.emit(
-          {
-            ...createDailyLogCheckDueEvent(businessDate, now.toISOString()),
-            actor: "SYSTEM",
-          },
-        );
+        for (const shipId of this.getShipIds()) {
+          this.eventBus.emit(
+            {
+              ...createDailyLogCheckDueEvent(businessDate, now.toISOString()),
+              shipId,
+              actor: "SYSTEM",
+            },
+          );
+        }
       }),
     );
 
@@ -34,12 +40,15 @@ export class EngineScheduler {
       cron.schedule("0 8 * * *", () => {
         const now = new Date();
         const businessDate = formatDate(previousDay(now));
-        this.eventBus.emit(
-          {
-            ...createDailyLogEscalationDueEvent(businessDate, now.toISOString()),
-            actor: "SYSTEM",
-          },
-        );
+        for (const shipId of this.getShipIds()) {
+          this.eventBus.emit(
+            {
+              ...createDailyLogEscalationDueEvent(businessDate, now.toISOString()),
+              shipId,
+              actor: "SYSTEM",
+            },
+          );
+        }
       }),
     );
   }
@@ -52,25 +61,27 @@ export class EngineScheduler {
     this.tasks.length = 0;
   }
 
-  triggerEndOfDayCheck(businessDate: string, occurredAt?: string): void {
+  triggerEndOfDayCheck(shipId: string, businessDate: string, occurredAt?: string): void {
     this.eventBus.emit(
       {
         ...createDailyLogCheckDueEvent(
           businessDate,
           occurredAt ?? new Date().toISOString(),
         ),
+        shipId,
         actor: "SYSTEM",
       },
     );
   }
 
-  triggerMorningEscalation(businessDate: string, occurredAt?: string): void {
+  triggerMorningEscalation(shipId: string, businessDate: string, occurredAt?: string): void {
     this.eventBus.emit(
       {
         ...createDailyLogEscalationDueEvent(
           businessDate,
           occurredAt ?? new Date().toISOString(),
         ),
+        shipId,
         actor: "SYSTEM",
       },
     );

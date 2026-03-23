@@ -26,7 +26,7 @@ export function startHttpServer(
         result: request.url ?? "",
         status: "500",
       });
-      sendJson(response, 500, { error: "Internal Server Error" });
+      sendError(response, 500, "Internal Server Error");
     }
   });
 
@@ -73,6 +73,23 @@ async function handleRequest(
       return;
     }
     sendSuccess(response, dependencies.store.getOverdueTasksByShip(shipId));
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/notifications") {
+    const shipId = url.searchParams.get("shipId");
+    const role = url.searchParams.get("role");
+    if (!shipId) {
+      logRejectedRequest(request, "shipId is required");
+      sendError(response, 400, "shipId is required");
+      return;
+    }
+    if (!role || !isValidRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+    sendSuccess(response, dependencies.store.getNotifications(shipId, role));
     return;
   }
 
@@ -139,6 +156,25 @@ async function handleRequest(
     return;
   }
 
+  if (method === "POST" && url.pathname.startsWith("/notifications/") && url.pathname.endsWith("/read")) {
+    const notificationId = getNotificationIdFromPath(url.pathname);
+    if (!notificationId) {
+      logRejectedRequest(request, "Invalid notification id");
+      sendError(response, 400, "Invalid notification id");
+      return;
+    }
+
+    try {
+      const notification = dependencies.store.markNotificationRead(notificationId);
+      sendSuccess(response, notification);
+      return;
+    } catch {
+      logRejectedRequest(request, "Notification not found");
+      sendError(response, 404, "Notification not found");
+      return;
+    }
+  }
+
   sendError(response, 404, "Not Found");
 }
 
@@ -196,6 +232,15 @@ function getTaskIdFromPath(pathname: string): string | null {
     return null;
   }
   return taskId;
+}
+
+function getNotificationIdFromPath(pathname: string): string | null {
+  const match = pathname.match(/^\/notifications\/([^/]+)\/read$/);
+  const notificationId = match?.[1] ?? null;
+  if (!notificationId || !/^[A-Za-z0-9_-]+$/.test(notificationId)) {
+    return null;
+  }
+  return notificationId;
 }
 
 function validateEventPayload(
@@ -304,7 +349,7 @@ function validateEventShape(event: EngineEvent): string | null {
   switch (event.type) {
     case "DAILY_LOG_CHECK_DUE":
     case "DAILY_LOG_ESCALATION_DUE":
-      return null;
+      return event.shipId ? null : `${event.type} requires shipId`;
     case "PMS_TASK_GENERATE":
       if (!event.shipId || !event.taskId || !event.taskTitle || !event.dueDate || !event.assignedRole) {
         return "PMS_TASK_GENERATE requires shipId, taskId, taskTitle, dueDate, and assignedRole";
