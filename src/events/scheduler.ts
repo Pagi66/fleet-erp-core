@@ -1,5 +1,6 @@
 import cron, { ScheduledTask } from "node-cron";
 import { AssignedRoleId, TaskSeverity } from "../core/types";
+import { createApprovalStaleCheckEvent } from "./approval-events";
 import {
   createDailyLogCheckDueEvent,
   createDailyLogEscalationDueEvent,
@@ -13,6 +14,8 @@ import { createPmsTaskCheckEvent, createPmsTaskGenerateEvent } from "./pms-event
 
 export class EngineScheduler {
   private readonly tasks: ScheduledTask[] = [];
+
+  private static readonly APPROVAL_STALE_THRESHOLD_HOURS = 24;
 
   constructor(
     private readonly eventBus: EventBus,
@@ -48,6 +51,24 @@ export class EngineScheduler {
               actor: "SYSTEM",
             },
           );
+        }
+      }),
+    );
+
+    this.tasks.push(
+      cron.schedule("0 * * * *", () => {
+        const now = new Date();
+        const businessDate = formatDate(now);
+        for (const shipId of this.getShipIds()) {
+          this.eventBus.emit({
+            ...createApprovalStaleCheckEvent(
+              shipId,
+              businessDate,
+              now.toISOString(),
+              EngineScheduler.APPROVAL_STALE_THRESHOLD_HOURS,
+            ),
+            actor: "SYSTEM",
+          });
         }
       }),
     );
@@ -173,6 +194,23 @@ export class EngineScheduler {
         actor: "SYSTEM",
       },
     );
+  }
+
+  triggerApprovalStaleCheck(
+    shipId: string,
+    businessDate: string,
+    occurredAt?: string,
+    staleThresholdHours = EngineScheduler.APPROVAL_STALE_THRESHOLD_HOURS,
+  ): void {
+    this.eventBus.emit({
+      ...createApprovalStaleCheckEvent(
+        shipId,
+        businessDate,
+        occurredAt ?? new Date().toISOString(),
+        staleThresholdHours,
+      ),
+      actor: "SYSTEM",
+    });
   }
 }
 

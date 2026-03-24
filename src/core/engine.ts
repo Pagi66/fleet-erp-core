@@ -1,3 +1,6 @@
+import { AuditApprovalInvalidAttemptAction } from "../actions/audit-approval-invalid-attempt.action";
+import { ApproveApprovalRecordAction } from "../actions/approve-approval-record.action";
+import { CreateApprovalRecordAction } from "../actions/create-approval-record.action";
 import { EscalateCoAction } from "../actions/escalate-co.action";
 import { CheckTaskAction } from "../actions/check-task.action";
 import { CreatePmsTaskAction } from "../actions/create-pms-task.action";
@@ -7,12 +10,16 @@ import { MarkPmsTaskOverdueAction } from "../actions/mark-pms-task-overdue.actio
 import { EscalateDefectToLogComdAction } from "../actions/escalate-defect-to-log-comd.action";
 import { EscalateDefectToMccAction } from "../actions/escalate-defect-to-mcc.action";
 import { NotifyMeoAction } from "../actions/notify-meo.action";
+import { NotifyApprovalOwnerAction } from "../actions/notify-approval-owner.action";
 import { NotifyPmsSupervisorAction } from "../actions/notify-pms-supervisor.action";
+import { RejectApprovalRecordAction } from "../actions/reject-approval-record.action";
 import { ReplanPmsTaskAction } from "../actions/replan-pms-task.action";
+import { SubmitApprovalRecordAction } from "../actions/submit-approval-record.action";
 import { ActionCommand, EngineEvent } from "./types";
 import { config } from "./config";
 import { logger } from "./logger";
 import { InMemoryStore } from "./store";
+import { ApprovalRule } from "../rules/approval.rule";
 import { DailyLogRule } from "../rules/daily-log.rule";
 import { DefectRule } from "../rules/defect.rule";
 import { PmsTaskRule } from "../rules/pms-task.rule";
@@ -20,9 +27,16 @@ import { EventBus } from "../events/event-system";
 
 interface EngineDependencies {
   store: InMemoryStore;
+  approvalRule: ApprovalRule;
   dailyLogRule: DailyLogRule;
   pmsTaskRule: PmsTaskRule;
   defectRule: DefectRule;
+  auditApprovalInvalidAttemptAction: AuditApprovalInvalidAttemptAction;
+  createApprovalRecordAction: CreateApprovalRecordAction;
+  submitApprovalRecordAction: SubmitApprovalRecordAction;
+  approveApprovalRecordAction: ApproveApprovalRecordAction;
+  rejectApprovalRecordAction: RejectApprovalRecordAction;
+  notifyApprovalOwnerAction: NotifyApprovalOwnerAction;
   markComplianceAction: MarkComplianceAction;
   notifyMeoAction: NotifyMeoAction;
   escalateCoAction: EscalateCoAction;
@@ -188,6 +202,48 @@ export class ComplianceEngine {
         );
         executed = true;
         break;
+      case "AUDIT_APPROVAL_INVALID_ATTEMPT":
+        this.dependencies.auditApprovalInvalidAttemptAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        executed = true;
+        break;
+      case "CREATE_APPROVAL_RECORD":
+        this.dependencies.createApprovalRecordAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        executed = true;
+        break;
+      case "SUBMIT_APPROVAL_RECORD":
+        this.dependencies.submitApprovalRecordAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        executed = true;
+        break;
+      case "APPROVE_APPROVAL_RECORD":
+        this.dependencies.approveApprovalRecordAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        executed = true;
+        break;
+      case "REJECT_APPROVAL_RECORD":
+        this.dependencies.rejectApprovalRecordAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        executed = true;
+        break;
+      case "NOTIFY_APPROVAL_OWNER":
+        this.dependencies.notifyApprovalOwnerAction.execute(
+          command,
+          this.dependencies.store,
+        );
+        executed = true;
+        break;
       default: {
         const exhaustiveCheck: never = command.type;
         throw new Error(`Unsupported action command: ${exhaustiveCheck}`);
@@ -230,6 +286,15 @@ export class ComplianceEngine {
         case "DEFECT_REPORTED":
         case "DEFECT_EVALUATION":
           return this.dependencies.defectRule.evaluate(
+            event,
+            this.dependencies.store,
+          );
+        case "APPROVAL_RECORD_CREATE":
+        case "APPROVAL_RECORD_SUBMIT":
+        case "APPROVAL_RECORD_APPROVE":
+        case "APPROVAL_RECORD_REJECT":
+        case "APPROVAL_RECORD_STALE_CHECK":
+          return this.dependencies.approvalRule.evaluate(
             event,
             this.dependencies.store,
           );
@@ -298,6 +363,30 @@ export class ComplianceEngine {
           : !event.taskId
             ? "DEFECT_EVALUATION requires taskId"
             : null;
+      case "APPROVAL_RECORD_CREATE":
+        return !event.shipId
+          ? "APPROVAL_RECORD_CREATE requires shipId"
+          : !event.recordId
+            ? "APPROVAL_RECORD_CREATE requires recordId"
+            : !event.recordKind
+              ? "APPROVAL_RECORD_CREATE requires recordKind"
+              : !event.recordTitle
+                ? "APPROVAL_RECORD_CREATE requires recordTitle"
+                : !event.actor
+                  ? "APPROVAL_RECORD_CREATE requires actor"
+                  : null;
+      case "APPROVAL_RECORD_SUBMIT":
+      case "APPROVAL_RECORD_APPROVE":
+      case "APPROVAL_RECORD_REJECT":
+        return !event.shipId
+          ? `${event.type} requires shipId`
+          : !event.recordId
+            ? `${event.type} requires recordId`
+            : !event.actor
+              ? `${event.type} requires actor`
+              : null;
+      case "APPROVAL_RECORD_STALE_CHECK":
+        return !event.shipId ? "APPROVAL_RECORD_STALE_CHECK requires shipId" : null;
       default:
         return null;
     }
@@ -332,7 +421,10 @@ export class ComplianceEngine {
       type: event.type,
       shipId: event.shipId ?? "GLOBAL",
       taskId: event.taskId ?? null,
+      recordId: event.recordId ?? null,
       businessDate: event.businessDate,
+      occurredAt: event.occurredAt,
+      transitionId: event.transitionId ?? null,
     });
     const now = Date.now();
     const isDuplicate =

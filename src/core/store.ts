@@ -11,9 +11,16 @@ import { dirname, resolve } from "path";
 import { config } from "./config";
 import { logger } from "./logger";
 import {
+  ApprovalHistoryEntry,
+  ApprovalHistoryType,
+  ApprovalRecordSnapshot,
+  ApprovalRecordView,
+  ApprovalStatus,
   AssignedRoleId,
   DailyComplianceState,
   EscalationState,
+  FleetRecord,
+  FleetRecordKind,
   LogRecord,
   LogType,
   Notification,
@@ -28,13 +35,21 @@ import {
   TaskStateSnapshot,
 } from "./types";
 
-const STORE_STATE_VERSION = 5;
+const STORE_STATE_VERSION = 8;
+
+interface ProcessedApprovalTransition {
+  recordId: string;
+  actionType: ApprovalHistoryType;
+}
 
 interface PersistedStoreState {
   version: number;
   ships: Ship[];
   tasks: Task[];
   taskHistory: Array<[string, TaskHistoryEntry[]]>;
+  records: FleetRecord[];
+  approvalHistory: Array<[string, ApprovalHistoryEntry[]]>;
+  processedTransitions: Array<[string, ProcessedApprovalTransition]>;
   escalationState: Array<[string, EscalationState]>;
   notifications: Notification[];
 }
@@ -72,6 +87,12 @@ export class InMemoryStore {
   private readonly tasksById = new Map<string, Task>();
 
   private readonly taskHistoryById = new Map<string, TaskHistoryEntry[]>();
+
+  private readonly recordsById = new Map<string, FleetRecord>();
+
+  private readonly approvalHistoryById = new Map<string, ApprovalHistoryEntry[]>();
+
+  private readonly processedTransitions = new Map<string, ProcessedApprovalTransition>();
 
   private readonly notificationsById = new Map<string, Notification>();
 
@@ -397,6 +418,296 @@ export class InMemoryStore {
     };
   }
 
+  createApprovalRecord(record: FleetRecord, occurredAt: string, actor: RoleId): FleetRecord {
+    this.assertValidShipId(record.shipId);
+    this.assertShipExists(record.shipId);
+    this.assertValidFleetRecord(record);
+    this.assertValidRole(actor, "actor");
+    const existing = this.getApprovalRecord(record.id);
+    if (existing) {
+      if (existing.shipId !== record.shipId) {
+        logger.error("cross_ship_record_id_conflict", new Error("Record ID already used by another ship"), {
+          status: `${existing.shipId}->${record.shipId}`,
+        });
+        throw new Error(`Record ID already exists in another ship: ${record.id}`);
+      }
+      return existing;
+    }
+
+    this.recordsById.set(record.id, record);
+    const state = this.createApprovalSnapshot(record);
+    this.appendApprovalHistory(
+      record.id,
+      record.shipId,
+      "CREATED",
+      state,
+      state,
+      occurredAt,
+      actor,
+      null,
+      null,
+      null,
+    );
+    this.persistState();
+    return record;
+  }
+
+  getApprovalRecord(recordId: string): FleetRecord | null {
+    return this.recordsById.get(recordId) ?? null;
+  }
+
+  getApprovalRecordInShip(recordId: string, shipId: string): FleetRecord | null {
+    this.assertValidShipId(shipId);
+    const record = this.getApprovalRecord(recordId);
+    if (!record || record.shipId !== shipId) {
+      return null;
+    }
+    return record;
+  }
+
+  getApprovalRecordViewInShip(recordId: string, shipId: string): ApprovalRecordView {
+    const record = this.getApprovalRecordInShip(recordId, shipId);
+    return {
+      record,
+      history: record ? [...(this.approvalHistoryById.get(recordId) ?? [])] : [],
+    };
+  }
+
+  getProcessedApprovalTransition(transitionId: string): ProcessedApprovalTransition | null {
+    return this.processedTransitions.get(transitionId) ?? null;
+  }
+
+  getPreviousApprovalOwnerInShip(recordId: string, shipId: string): AssignedRoleId {
+    const record = this.getApprovalRecordInShip(recordId, shipId);
+    if (!record) {
+      throw new Error("Approval record does not exist in the provided ship context");
+    }
+    return this.getPreviousApprovalOwner(recordId, record);
+  }
+
+  getApprovalRecordsByShip(shipId: string): FleetRecord[] {
+    this.assertValidShipId(shipId);
+    return [...this.recordsById.values()].filter((record) => record.shipId === shipId);
+  }
+
+  getApprovalRecordsVisibleToRole(shipId: string, role: AssignedRoleId): FleetRecord[] {
+    this.assertValidShipId(shipId);
+    this.assertValidAssignedRole(role, "role");
+    return this.getApprovalRecordsByShip(shipId).filter((record) => record.visibleTo.includes(role));
+  }
+
+  getApprovalRecordViewVisibleToRole(
+    recordId: string,
+    shipId: string,
+    role: AssignedRoleId,
+  ): ApprovalRecordView {
+    this.assertValidAssignedRole(role, "role");
+    const view = this.getApprovalRecordViewInShip(recordId, shipId);
+    if (!view.record || !view.record.visibleTo.includes(role)) {
+      return {
+        record: null,
+        history: [],
+      };
+    }
+    return view;
+  }
+
+  getStaleApprovalRecordsByShip(
+    shipId: string,
+    occurredAt: string,
+    thresholdHours: number,
+  ): FleetRecord[] {
+    this.assertValidShipId(shipId);
+    if (!Number.isFinite(thresholdHours) || thresholdHours <= 0) {
+      throw new Error("thresholdHours must be a positive number");
+    }
+
+    const thresholdMs = thresholdHours * 60 * 60 * 1000;
+    const nowMs = new Date(occurredAt).getTime();
+    if (Number.isNaN(nowMs)) {
+      throw new Error(`Invalid occurredAt timestamp: ${occurredAt}`);
+    }
+
+    return this.getApprovalRecordsByShip(shipId).filter((record) => {
+      if (record.approval.status === "APPROVED" || record.approval.status === "REJECTED") {
+        return false;
+      }
+
+      const lastActionMs = record.approval.lastActionAt ? new Date(record.approval.lastActionAt).getTime() : NaN;
+      if (Number.isNaN(lastActionMs) || nowMs - lastActionMs < thresholdMs) {
+        return false;
+      }
+
+      const lastReminderMs = record.approval.lastStaleNotificationAt
+        ? new Date(record.approval.lastStaleNotificationAt).getTime()
+        : Number.NEGATIVE_INFINITY;
+
+      return lastReminderMs < lastActionMs;
+    });
+  }
+
+  submitApprovalRecord(
+    recordId: string,
+    shipId: string,
+    occurredAt: string,
+    actor: RoleId,
+    transitionId: string,
+    reason: string | null,
+    note: string | null,
+  ): FleetRecord {
+    this.assertValidRole(actor, "actor");
+    return this.applyApprovalTransition(
+      recordId,
+      shipId,
+      actor,
+      occurredAt,
+      transitionId,
+      "SUBMITTED",
+      reason,
+      note,
+      (current) => {
+        if (current.approval.status !== "DRAFT") {
+          throw new Error(`Invalid approval status transition: ${current.approval.status} -> SUBMITTED`);
+        }
+        const nextIndex = current.approval.currentStepIndex + 1;
+        if (nextIndex >= current.approval.chain.length) {
+          throw new Error("Approval chain has no next owner for submit");
+        }
+        const nextOwner = this.getApprovalChainRole(current.approval.chain, nextIndex);
+        return {
+          approval: {
+            ...current.approval,
+            currentStepIndex: nextIndex,
+            approvalLevel: nextIndex,
+            currentOwner: nextOwner,
+            status: "SUBMITTED",
+            submittedAt: occurredAt,
+            rejectedAt: null,
+            lastActionBy: actor,
+            lastActionAt: occurredAt,
+            lastActionReason: reason,
+            lastActionNote: note,
+            version: current.approval.version + 1,
+          },
+        };
+      },
+    );
+  }
+
+  approveApprovalRecord(
+    recordId: string,
+    shipId: string,
+    occurredAt: string,
+    actor: RoleId,
+    transitionId: string,
+    reason: string | null,
+    note: string | null,
+  ): FleetRecord {
+    this.assertValidRole(actor, "actor");
+    return this.applyApprovalTransition(
+      recordId,
+      shipId,
+      actor,
+      occurredAt,
+      transitionId,
+      "APPROVED",
+      reason,
+      note,
+      (current) => {
+        if (current.approval.status !== "SUBMITTED") {
+          throw new Error(`Invalid approval status transition: ${current.approval.status} -> APPROVED`);
+        }
+        if (current.approval.currentOwner !== actor) {
+          throw new Error("Only the current owner may approve the record");
+        }
+        const isFinalStep = current.approval.currentStepIndex === current.approval.chain.length - 1;
+        if (isFinalStep) {
+          return {
+            approval: {
+              ...current.approval,
+              status: "APPROVED",
+              approvedAt: occurredAt,
+              lastActionBy: actor,
+              lastActionAt: occurredAt,
+              lastActionReason: reason,
+              lastActionNote: note,
+              version: current.approval.version + 1,
+            },
+          };
+        }
+
+        const nextIndex = current.approval.currentStepIndex + 1;
+        const nextOwner = this.getApprovalChainRole(current.approval.chain, nextIndex);
+        return {
+          approval: {
+            ...current.approval,
+            currentStepIndex: nextIndex,
+            approvalLevel: nextIndex,
+            currentOwner: nextOwner,
+            status: "SUBMITTED",
+            approvedAt: null,
+            lastActionBy: actor,
+            lastActionAt: occurredAt,
+            lastActionReason: reason,
+            lastActionNote: note,
+            version: current.approval.version + 1,
+          },
+        };
+      },
+    );
+  }
+
+  rejectApprovalRecord(
+    recordId: string,
+    shipId: string,
+    occurredAt: string,
+    actor: RoleId,
+    transitionId: string,
+    reason: string | null,
+    note: string | null,
+  ): FleetRecord {
+    this.assertValidRole(actor, "actor");
+    return this.applyApprovalTransition(
+      recordId,
+      shipId,
+      actor,
+      occurredAt,
+      transitionId,
+      "REJECTED",
+      reason,
+      note,
+      (current) => {
+        if (current.approval.status !== "SUBMITTED") {
+          throw new Error(`Invalid approval status transition: ${current.approval.status} -> REJECTED`);
+        }
+        if (current.approval.currentOwner !== actor) {
+          throw new Error("Only the current owner may reject the record");
+        }
+        const previousOwner = this.getPreviousApprovalOwner(recordId, current);
+        const previousIndex = current.approval.chain.indexOf(previousOwner);
+        if (previousIndex < 0 || previousIndex >= current.approval.currentStepIndex) {
+          throw new Error("Approval rejection could not resolve a valid previous owner");
+        }
+        return {
+          approval: {
+            ...current.approval,
+            currentStepIndex: previousIndex,
+            approvalLevel: previousIndex,
+            currentOwner: previousOwner,
+            status: "REJECTED",
+            rejectedAt: occurredAt,
+            approvedAt: null,
+            lastActionBy: actor,
+            lastActionAt: occurredAt,
+            lastActionReason: reason,
+            lastActionNote: note,
+            version: current.approval.version + 1,
+          },
+        };
+      },
+    );
+  }
+
   getAllTasks(): Task[] {
     return [...this.tasksById.values()];
   }
@@ -584,6 +895,107 @@ export class InMemoryStore {
     });
   }
 
+  private appendApprovalHistory(
+    recordId: string,
+    shipId: string,
+    actionType: ApprovalHistoryType,
+    previousState: ApprovalRecordSnapshot,
+    newState: ApprovalRecordSnapshot,
+    timestamp: string,
+    actor: RoleId,
+    transitionId: string | null,
+    reason: string | null,
+    note: string | null,
+  ): void {
+    const current = this.approvalHistoryById.get(recordId) ?? [];
+    current.push({
+      recordId,
+      shipId,
+      timestamp,
+      actionType,
+      previousState,
+      newState,
+      actor,
+      transitionId,
+      reason,
+      note,
+    });
+    this.approvalHistoryById.set(recordId, current);
+    logger.stateChange({
+      actionType,
+      status: newState.status,
+      result: `${previousState.status}->${newState.status}`,
+    });
+  }
+
+  recordApprovalInvalidAttempt(
+    recordId: string,
+    shipId: string,
+    occurredAt: string,
+    actor: RoleId,
+    transitionId: string | null,
+    reason: string,
+    note: string | null,
+  ): void {
+    const record = this.getApprovalRecordInShip(recordId, shipId);
+    if (!record) {
+      return;
+    }
+
+    const state = this.createApprovalSnapshot(record);
+    this.appendApprovalHistory(
+      recordId,
+      shipId,
+      "INVALID_ATTEMPT",
+      state,
+      state,
+      occurredAt,
+      actor,
+      transitionId,
+      reason,
+      note,
+    );
+    this.persistState();
+  }
+
+  recordApprovalStaleNotification(
+    recordId: string,
+    shipId: string,
+    occurredAt: string,
+    actor: RoleId,
+  ): FleetRecord {
+    const record = this.getApprovalRecordInShip(recordId, shipId);
+    if (!record) {
+      throw new Error("Approval record does not exist in the provided ship context");
+    }
+    this.assertApprovalRecordMutable(record, "stale reminder");
+
+    const previousState = this.createApprovalSnapshot(record);
+    const next: FleetRecord = {
+      ...record,
+      approval: {
+        ...record.approval,
+        lastStaleNotificationAt: occurredAt,
+      },
+    };
+    this.recordsById.set(recordId, next);
+    const newState = this.createApprovalSnapshot(next);
+    this.appendApprovalHistory(
+      recordId,
+      shipId,
+      "STALE_REMINDER_SENT",
+      previousState,
+      newState,
+      occurredAt,
+      actor,
+      null,
+      "Stale approval reminder sent",
+      null,
+    );
+    this.persistState();
+    return next;
+  }
+
   private applyTaskUpdate(
     taskId: string,
     update: Partial<Task>,
@@ -638,6 +1050,30 @@ export class InMemoryStore {
     };
   }
 
+  private createApprovalSnapshot(record: FleetRecord): ApprovalRecordSnapshot {
+    return {
+      shipId: record.shipId,
+      kind: record.kind,
+      title: record.title,
+      businessDate: record.businessDate,
+      originRole: record.originRole,
+      chain: [...record.approval.chain],
+      currentStepIndex: record.approval.currentStepIndex,
+      approvalLevel: record.approval.approvalLevel,
+      currentOwner: record.approval.currentOwner,
+      status: record.approval.status,
+      submittedAt: record.approval.submittedAt,
+      approvedAt: record.approval.approvedAt,
+      rejectedAt: record.approval.rejectedAt,
+      lastActionBy: record.approval.lastActionBy,
+      lastActionAt: record.approval.lastActionAt,
+      lastActionReason: record.approval.lastActionReason,
+      lastActionNote: record.approval.lastActionNote,
+      lastStaleNotificationAt: record.approval.lastStaleNotificationAt,
+      version: record.approval.version,
+    };
+  }
+
   private isSameState(
     left: TaskStateSnapshot,
     right: TaskStateSnapshot,
@@ -660,6 +1096,119 @@ export class InMemoryStore {
       left.severity === right.severity &&
       left.escalatedAt === right.escalatedAt
     );
+  }
+
+  private isSameApprovalState(
+    left: ApprovalRecordSnapshot,
+    right: ApprovalRecordSnapshot,
+  ): boolean {
+    return (
+      left.shipId === right.shipId &&
+      left.kind === right.kind &&
+      left.title === right.title &&
+      left.businessDate === right.businessDate &&
+      left.originRole === right.originRole &&
+      left.chain.length === right.chain.length &&
+      left.chain.every((role, index) => role === right.chain[index]) &&
+      left.currentStepIndex === right.currentStepIndex &&
+      left.approvalLevel === right.approvalLevel &&
+      left.currentOwner === right.currentOwner &&
+      left.status === right.status &&
+      left.submittedAt === right.submittedAt &&
+      left.approvedAt === right.approvedAt &&
+      left.rejectedAt === right.rejectedAt &&
+      left.lastActionBy === right.lastActionBy &&
+      left.lastActionAt === right.lastActionAt &&
+      left.lastActionReason === right.lastActionReason &&
+      left.lastActionNote === right.lastActionNote &&
+      left.lastStaleNotificationAt === right.lastStaleNotificationAt &&
+      left.version === right.version
+    );
+  }
+
+  private applyApprovalTransition(
+    recordId: string,
+    shipId: string,
+    actor: RoleId,
+    occurredAt: string,
+    transitionId: string,
+    actionType: ApprovalHistoryType,
+    reason: string | null,
+    note: string | null,
+    mutator: (record: FleetRecord) => Partial<FleetRecord>,
+  ): FleetRecord {
+    this.assertValidShipId(shipId);
+    const current = this.getApprovalRecordInShip(recordId, shipId);
+    if (!current) {
+      throw new Error("Approval record does not exist in the provided ship context");
+    }
+
+    const processedRecordId = this.processedTransitions.get(transitionId);
+    if (processedRecordId) {
+      if (processedRecordId.recordId !== recordId || processedRecordId.actionType !== actionType) {
+        throw new Error(`Transition ID already used for another record: ${transitionId}`);
+      }
+      return current;
+    }
+
+    if (this.isTerminalApprovalStatus(current.approval.status)) {
+      this.recordApprovalInvalidAttempt(
+        recordId,
+        shipId,
+        occurredAt,
+        actor,
+        transitionId,
+        `Transition blocked in terminal state: ${current.approval.status}`,
+        note,
+      );
+      throw new Error(`Approval record is in terminal state: ${current.approval.status}`);
+    }
+
+    const previousState = this.createApprovalSnapshot(current);
+    let next: FleetRecord;
+    try {
+      next = {
+        ...current,
+        ...mutator(current),
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Invalid approval transition";
+      this.recordApprovalInvalidAttempt(
+        recordId,
+        shipId,
+        occurredAt,
+        actor,
+        transitionId,
+        reason,
+        note,
+      );
+      throw error;
+    }
+    this.assertValidFleetRecord(next);
+    this.recordsById.set(recordId, next);
+    const newState = this.createApprovalSnapshot(next);
+
+    if (!this.isSameApprovalState(previousState, newState)) {
+      this.appendApprovalHistory(
+        recordId,
+        shipId,
+        actionType,
+        previousState,
+        newState,
+        occurredAt,
+        actor,
+        transitionId,
+        reason,
+        note,
+      );
+    }
+
+    this.processedTransitions.set(transitionId, {
+      recordId,
+      actionType,
+    });
+    this.persistState();
+    return next;
   }
 
   private assertTaskStatusTransition(
@@ -697,6 +1246,16 @@ export class InMemoryStore {
 
     if (!allowedTransitions[current].includes(next)) {
       throw new Error(`Invalid escalation transition: ${current} -> ${next}`);
+    }
+  }
+
+  private isTerminalApprovalStatus(status: ApprovalStatus): boolean {
+    return status === "APPROVED" || status === "REJECTED";
+  }
+
+  private assertApprovalRecordMutable(record: FleetRecord, operation: string): void {
+    if (this.isTerminalApprovalStatus(record.approval.status)) {
+      throw new Error(`Approval record is immutable in terminal state during ${operation}: ${record.approval.status}`);
     }
   }
 
@@ -784,6 +1343,21 @@ export class InMemoryStore {
       this.taskHistoryById.set(taskId, history);
     }
 
+    this.recordsById.clear();
+    for (const record of persisted.records) {
+      this.recordsById.set(record.id, record);
+    }
+
+    this.approvalHistoryById.clear();
+    for (const [recordId, history] of persisted.approvalHistory) {
+      this.approvalHistoryById.set(recordId, history);
+    }
+
+    this.processedTransitions.clear();
+    for (const [transitionId, transition] of persisted.processedTransitions) {
+      this.processedTransitions.set(transitionId, transition);
+    }
+
     this.escalationByDate.clear();
     for (const [businessDate, escalationState] of persisted.escalationState) {
       this.escalationByDate.set(businessDate, escalationState);
@@ -857,6 +1431,24 @@ export class InMemoryStore {
     if (
       !Array.isArray(value.taskHistory) ||
       !value.taskHistory.every((entry) => this.isTaskHistoryTuple(entry))
+    ) {
+      return false;
+    }
+
+    if (!Array.isArray(value.records) || !value.records.every((item) => this.isFleetRecord(item))) {
+      return false;
+    }
+
+    if (
+      !Array.isArray(value.approvalHistory) ||
+      !value.approvalHistory.every((entry) => this.isApprovalHistoryTuple(entry))
+    ) {
+      return false;
+    }
+
+    if (
+      !Array.isArray(value.processedTransitions) ||
+      !value.processedTransitions.every((entry) => this.isProcessedTransitionTuple(entry))
     ) {
       return false;
     }
@@ -935,6 +1527,29 @@ export class InMemoryStore {
     );
   }
 
+  private isFleetRecord(value: unknown): value is FleetRecord {
+    if (!isRecord(value)) {
+      return false;
+    }
+
+    return (
+      typeof value.id === "string" &&
+      typeof value.shipId === "string" &&
+      value.shipId.trim() !== "" &&
+      this.isFleetRecordKind(value.kind) &&
+      typeof value.title === "string" &&
+      value.title.trim() !== "" &&
+      (typeof value.description === "string" || value.description === null) &&
+      typeof value.businessDate === "string" &&
+      typeof value.createdAt === "string" &&
+      this.isAssignedRoleId(value.originRole) &&
+      Array.isArray(value.visibleTo) &&
+      value.visibleTo.length >= 1 &&
+      value.visibleTo.every((role) => this.isAssignedRoleId(role)) &&
+      this.isApprovalFlow(value.approval)
+    );
+  }
+
   private isShip(value: unknown): value is Ship {
     return (
       isRecord(value) &&
@@ -974,6 +1589,36 @@ export class InMemoryStore {
     );
   }
 
+  private isApprovalHistoryTuple(value: unknown): value is [string, ApprovalHistoryEntry[]] {
+    return (
+      Array.isArray(value) &&
+      value.length === 2 &&
+      typeof value[0] === "string" &&
+      Array.isArray(value[1]) &&
+      value[1].every((entry) => this.isApprovalHistoryEntry(entry))
+    );
+  }
+
+  private isApprovalHistoryEntry(value: unknown): value is ApprovalHistoryEntry {
+    if (!isRecord(value)) {
+      return false;
+    }
+
+    return (
+      typeof value.recordId === "string" &&
+      typeof value.shipId === "string" &&
+      value.shipId.trim() !== "" &&
+      typeof value.timestamp === "string" &&
+      this.isApprovalHistoryType(value.actionType) &&
+      this.isApprovalRecordSnapshot(value.previousState) &&
+      this.isApprovalRecordSnapshot(value.newState) &&
+      (value.actor === "SYSTEM" || this.isRoleId(value.actor)) &&
+      (typeof value.transitionId === "string" || value.transitionId === null) &&
+      (typeof value.reason === "string" || value.reason === null) &&
+      (typeof value.note === "string" || value.note === null)
+    );
+  }
+
   private isTaskStateSnapshot(value: unknown): value is TaskStateSnapshot {
     if (!isRecord(value)) {
       return false;
@@ -1006,6 +1651,37 @@ export class InMemoryStore {
         value.severity === "CRITICAL" ||
         value.severity === null) &&
       isNullableString(value.escalatedAt)
+    );
+  }
+
+  private isApprovalRecordSnapshot(value: unknown): value is ApprovalRecordSnapshot {
+    if (!isRecord(value)) {
+      return false;
+    }
+
+    return (
+      typeof value.shipId === "string" &&
+      value.shipId.trim() !== "" &&
+      this.isFleetRecordKind(value.kind) &&
+      typeof value.title === "string" &&
+      typeof value.businessDate === "string" &&
+      this.isAssignedRoleId(value.originRole) &&
+      Array.isArray(value.chain) &&
+      value.chain.length >= 2 &&
+      value.chain.every((role) => this.isAssignedRoleId(role)) &&
+      typeof value.currentStepIndex === "number" &&
+      typeof value.approvalLevel === "number" &&
+      this.isAssignedRoleId(value.currentOwner) &&
+      this.isApprovalStatus(value.status) &&
+      isNullableString(value.submittedAt) &&
+      isNullableString(value.approvedAt) &&
+      isNullableString(value.rejectedAt) &&
+      (value.lastActionBy === null || value.lastActionBy === "SYSTEM" || this.isRoleId(value.lastActionBy)) &&
+      isNullableString(value.lastActionAt) &&
+      isNullableString(value.lastActionReason) &&
+      isNullableString(value.lastActionNote) &&
+      isNullableString(value.lastStaleNotificationAt) &&
+      typeof value.version === "number"
     );
   }
 
@@ -1050,10 +1726,28 @@ export class InMemoryStore {
       typeof value.shipId === "string" &&
       value.shipId.trim() !== "" &&
       isNullableString(value.taskId) &&
+      (typeof value.recordId === "undefined" || isNullableString(value.recordId)) &&
       typeof value.message === "string" &&
       this.isRoleId(value.targetRole) &&
       typeof value.timestamp === "string" &&
       typeof value.read === "boolean"
+    );
+  }
+
+  private isProcessedTransitionTuple(value: unknown): value is [string, ProcessedApprovalTransition] {
+    return (
+      Array.isArray(value) &&
+      value.length === 2 &&
+      typeof value[0] === "string" &&
+      this.isProcessedApprovalTransition(value[1])
+    );
+  }
+
+  private isProcessedApprovalTransition(value: unknown): value is ProcessedApprovalTransition {
+    return (
+      isRecord(value) &&
+      typeof value.recordId === "string" &&
+      this.isApprovalHistoryType(value.actionType)
     );
   }
 
@@ -1064,6 +1758,8 @@ export class InMemoryStore {
       input.shipId,
       input.type,
       input.taskId ?? "NO_TASK",
+      input.recordId ?? "NO_RECORD",
+      input.targetRole,
     ].join("|");
   }
 
@@ -1088,6 +1784,23 @@ export class InMemoryStore {
     );
   }
 
+  private isApprovalStatus(value: unknown): value is ApprovalStatus {
+    return (
+      value === "DRAFT" ||
+      value === "SUBMITTED" ||
+      value === "APPROVED" ||
+      value === "REJECTED"
+    );
+  }
+
+  private isFleetRecordKind(value: unknown): value is FleetRecordKind {
+    return (
+      value === "MAINTENANCE_LOG" ||
+      value === "DEFECT" ||
+      value === "WORK_REQUEST"
+    );
+  }
+
   private isTaskHistoryType(value: unknown): value is TaskHistoryType {
     return (
       value === "CREATED" ||
@@ -1100,10 +1813,106 @@ export class InMemoryStore {
     );
   }
 
+  private isApprovalHistoryType(value: unknown): value is ApprovalHistoryType {
+    return (
+      value === "CREATED" ||
+      value === "SUBMITTED" ||
+      value === "APPROVED" ||
+      value === "REJECTED" ||
+      value === "INVALID_ATTEMPT" ||
+      value === "STALE_REMINDER_SENT"
+    );
+  }
+
+  private isApprovalFlow(value: unknown): value is FleetRecord["approval"] {
+    if (!isRecord(value)) {
+      return false;
+    }
+
+    return (
+      Array.isArray(value.chain) &&
+      value.chain.length >= 2 &&
+      value.chain.every((role) => this.isAssignedRoleId(role)) &&
+      typeof value.currentStepIndex === "number" &&
+      typeof value.approvalLevel === "number" &&
+      this.isAssignedRoleId(value.currentOwner) &&
+      this.isApprovalStatus(value.status) &&
+      isNullableString(value.submittedAt) &&
+      isNullableString(value.approvedAt) &&
+      isNullableString(value.rejectedAt) &&
+      (value.lastActionBy === null || value.lastActionBy === "SYSTEM" || this.isRoleId(value.lastActionBy)) &&
+      isNullableString(value.lastActionAt) &&
+      isNullableString(value.lastActionReason) &&
+      isNullableString(value.lastActionNote) &&
+      isNullableString(value.lastStaleNotificationAt) &&
+      typeof value.version === "number"
+    );
+  }
+
+  private assertValidFleetRecord(record: FleetRecord): void {
+    if (!this.isFleetRecord(record)) {
+      throw new Error("Invalid approval record");
+    }
+
+    if (record.approval.chain[0] !== record.originRole) {
+      throw new Error("Approval chain must begin with the origin role");
+    }
+
+    if (!record.visibleTo.includes(record.originRole)) {
+      throw new Error("Approval visibleTo must include the origin role");
+    }
+
+    if (!record.visibleTo.includes(record.approval.currentOwner)) {
+      throw new Error("Approval visibleTo must include the current owner");
+    }
+
+    if (record.approval.currentStepIndex < 0 || record.approval.currentStepIndex >= record.approval.chain.length) {
+      throw new Error("Approval currentStepIndex is out of bounds");
+    }
+
+    if (record.approval.approvalLevel !== record.approval.currentStepIndex) {
+      throw new Error("Approval level must match the current step index");
+    }
+
+    if (record.approval.chain[record.approval.currentStepIndex] !== record.approval.currentOwner) {
+      throw new Error("Approval currentOwner must match the current chain step");
+    }
+  }
+
+  private getApprovalChainRole(chain: AssignedRoleId[], index: number): AssignedRoleId {
+    const role = chain[index];
+    if (!role) {
+      throw new Error(`Approval chain role missing at index ${index}`);
+    }
+    return role;
+  }
+
+  private getPreviousApprovalOwner(recordId: string, current: FleetRecord): AssignedRoleId {
+    const history = this.approvalHistoryById.get(recordId) ?? [];
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const entry = history[index];
+      if (!entry) {
+        continue;
+      }
+      if (
+        (entry.actionType === "SUBMITTED" || entry.actionType === "APPROVED") &&
+        entry.newState.currentOwner === current.approval.currentOwner &&
+        entry.previousState.currentOwner !== entry.newState.currentOwner
+      ) {
+        return entry.previousState.currentOwner;
+      }
+    }
+
+    throw new Error("Approval rejection could not determine a previous owner from history");
+  }
+
   private resetPersistedState(): void {
     this.shipsById.clear();
     this.tasksById.clear();
     this.taskHistoryById.clear();
+    this.recordsById.clear();
+    this.approvalHistoryById.clear();
+    this.processedTransitions.clear();
     this.escalationByDate.clear();
     this.notificationsById.clear();
   }
@@ -1114,6 +1923,9 @@ export class InMemoryStore {
       ships: [...this.shipsById.values()],
       tasks: [...this.tasksById.values()],
       taskHistory: [...this.taskHistoryById.entries()],
+      records: [...this.recordsById.values()],
+      approvalHistory: [...this.approvalHistoryById.entries()],
+      processedTransitions: [...this.processedTransitions.entries()],
       escalationState: [...this.escalationByDate.entries()],
       notifications: [...this.notificationsById.values()],
     };

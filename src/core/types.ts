@@ -16,7 +16,12 @@ export type EngineEventType =
   | "PMS_TASK_GENERATE"
   | "PMS_TASK_CHECK"
   | "DEFECT_REPORTED"
-  | "DEFECT_EVALUATION";
+  | "DEFECT_EVALUATION"
+  | "APPROVAL_RECORD_CREATE"
+  | "APPROVAL_RECORD_SUBMIT"
+  | "APPROVAL_RECORD_APPROVE"
+  | "APPROVAL_RECORD_REJECT"
+  | "APPROVAL_RECORD_STALE_CHECK";
 
 export type ActionType =
   | "MARK_COMPLIANT"
@@ -30,7 +35,13 @@ export type ActionType =
   | "NOTIFY_PMS_SUPERVISOR"
   | "CREATE_DEFECT_TASK"
   | "ESCALATE_DEFECT_TO_MCC"
-  | "ESCALATE_DEFECT_TO_LOG_COMD";
+  | "ESCALATE_DEFECT_TO_LOG_COMD"
+  | "CREATE_APPROVAL_RECORD"
+  | "SUBMIT_APPROVAL_RECORD"
+  | "APPROVE_APPROVAL_RECORD"
+  | "REJECT_APPROVAL_RECORD"
+  | "NOTIFY_APPROVAL_OWNER"
+  | "AUDIT_APPROVAL_INVALID_ATTEMPT";
 
 export type TaskKind = "PMS" | "DEFECT";
 
@@ -40,6 +51,10 @@ export type TaskSeverity = "ROUTINE" | "URGENT" | "CRITICAL" | null;
 
 export type EscalationLevel = "NONE" | "MCC" | "LOG_COMD";
 
+export type ApprovalStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
+
+export type FleetRecordKind = "MAINTENANCE_LOG" | "DEFECT" | "WORK_REQUEST";
+
 export type TaskHistoryType =
   | "CREATED"
   | "CHECKED"
@@ -48,6 +63,14 @@ export type TaskHistoryType =
   | "NOTIFIED"
   | "COMPLETED"
   | "ESCALATED";
+
+export type ApprovalHistoryType =
+  | "CREATED"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "INVALID_ATTEMPT"
+  | "STALE_REMINDER_SENT";
 
 export interface Ship {
   id: string;
@@ -61,10 +84,41 @@ export interface Notification {
   dedupeKey?: string;
   shipId: string;
   taskId: string | null;
+  recordId?: string | null;
   message: string;
   targetRole: RoleId;
   timestamp: string;
   read: boolean;
+}
+
+export interface ApprovalFlow {
+  chain: AssignedRoleId[];
+  currentStepIndex: number;
+  approvalLevel: number;
+  currentOwner: AssignedRoleId;
+  status: ApprovalStatus;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  lastActionBy: RoleId | null;
+  lastActionAt: string | null;
+  lastActionReason: string | null;
+  lastActionNote: string | null;
+  lastStaleNotificationAt: string | null;
+  version: number;
+}
+
+export interface FleetRecord {
+  id: string;
+  shipId: string;
+  kind: FleetRecordKind;
+  title: string;
+  description: string | null;
+  businessDate: string;
+  createdAt: string;
+  originRole: AssignedRoleId;
+  visibleTo: AssignedRoleId[];
+  approval: ApprovalFlow;
 }
 
 export interface LogRecord {
@@ -137,6 +191,28 @@ export interface TaskStateSnapshot {
   escalatedAt: string | null;
 }
 
+export interface ApprovalRecordSnapshot {
+  shipId: string;
+  kind: FleetRecordKind;
+  title: string;
+  businessDate: string;
+  originRole: AssignedRoleId;
+  chain: AssignedRoleId[];
+  currentStepIndex: number;
+  approvalLevel: number;
+  currentOwner: AssignedRoleId;
+  status: ApprovalStatus;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  lastActionBy: RoleId | null;
+  lastActionAt: string | null;
+  lastActionReason: string | null;
+  lastActionNote: string | null;
+  lastStaleNotificationAt: string | null;
+  version: number;
+}
+
 export interface TaskHistoryEntry {
   taskId: string;
   shipId: string;
@@ -145,6 +221,19 @@ export interface TaskHistoryEntry {
   previousState: TaskStateSnapshot;
   newState: TaskStateSnapshot;
   actor: RoleId | "SYSTEM";
+}
+
+export interface ApprovalHistoryEntry {
+  recordId: string;
+  shipId: string;
+  timestamp: string;
+  actionType: ApprovalHistoryType;
+  previousState: ApprovalRecordSnapshot;
+  newState: ApprovalRecordSnapshot;
+  actor: RoleId | "SYSTEM";
+  transitionId: string | null;
+  reason: string | null;
+  note: string | null;
 }
 
 export interface EngineEvent {
@@ -160,6 +249,14 @@ export interface EngineEvent {
   taskKind?: TaskKind;
   ettrDays?: number;
   severity?: TaskSeverity;
+  recordId?: string;
+  recordKind?: FleetRecordKind;
+  recordTitle?: string;
+  description?: string;
+  transitionId?: string;
+  reason?: string;
+  note?: string;
+  staleThresholdHours?: number;
 }
 
 export interface ActionCommand {
@@ -178,6 +275,16 @@ export interface ActionCommand {
   taskKind?: TaskKind;
   ettrDays?: number;
   severity?: TaskSeverity;
+  recordId?: string;
+  recordKind?: FleetRecordKind;
+  recordTitle?: string;
+  description?: string;
+  originRole?: AssignedRoleId;
+  transitionId?: string;
+  reason?: string;
+  note?: string;
+  currentOwner?: AssignedRoleId;
+  notificationType?: string;
 }
 
 export interface RuleDecision {
@@ -191,7 +298,12 @@ export interface RuleDecision {
     | "TASK_CREATED"
     | "TASK_COMPLETED"
     | "TASK_OVERDUE"
-    | "TASK_ESCALATED";
+    | "TASK_ESCALATED"
+    | "RECORD_CREATED"
+    | "RECORD_SUBMITTED"
+    | "RECORD_APPROVED"
+    | "RECORD_REJECTED"
+    | "RECORD_NOTIFIED";
   missingLogs: LogType[];
   commands: ActionCommand[];
 }
@@ -205,6 +317,11 @@ export interface StoreSnapshot {
 export interface TaskSnapshot {
   task: Task | null;
   history: TaskHistoryEntry[];
+}
+
+export interface ApprovalRecordView {
+  record: FleetRecord | null;
+  history: ApprovalHistoryEntry[];
 }
 
 export const REQUIRED_DAILY_LOGS: LogType[] = [

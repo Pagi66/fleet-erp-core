@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, Server, ServerResponse } from "http";
 import { CompleteTaskAction } from "../actions/complete-task.action";
 import { config } from "../core/config";
 import { logger } from "../core/logger";
-import { AssignedRoleId, EngineEvent, RoleId, Task } from "../core/types";
+import { AssignedRoleId, EngineEvent, FleetRecordKind, RoleId } from "../core/types";
 import { EventBus } from "../events/event-system";
 import { InMemoryStore } from "../core/store";
 
@@ -93,6 +93,37 @@ async function handleRequest(
     return;
   }
 
+  if (method === "GET" && url.pathname === "/records") {
+    const shipId = url.searchParams.get("shipId");
+    const role = url.searchParams.get("role");
+    if (!shipId || !role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "shipId and role are required");
+      sendError(response, 400, "shipId and role are required");
+      return;
+    }
+    sendSuccess(response, dependencies.store.getApprovalRecordsVisibleToRole(shipId, role));
+    return;
+  }
+
+  if (method === "GET" && url.pathname.startsWith("/records/")) {
+    const recordId = getRecordIdFromPath(url.pathname);
+    const shipId = url.searchParams.get("shipId");
+    const role = url.searchParams.get("role");
+    if (!recordId || !shipId || !role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "recordId, shipId, and role are required");
+      sendError(response, 400, "recordId, shipId, and role are required");
+      return;
+    }
+    const recordView = dependencies.store.getApprovalRecordViewVisibleToRole(recordId, shipId, role);
+    if (!recordView.record) {
+      logRejectedRequest(request, "Record not found");
+      sendError(response, 404, "Record not found");
+      return;
+    }
+    sendSuccess(response, recordView);
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/events") {
     const payload = await readJsonBody(request);
     const actor = extractRole(request, payload);
@@ -115,6 +146,26 @@ async function handleRequest(
 
     dependencies.eventBus.emit(validation.data);
     sendSuccess(response, { accepted: true });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/records") {
+    const payload = await readJsonBody(request);
+    const actor = extractRole(request, payload);
+    if (!actor || actor === "SYSTEM") {
+      logRejectedRequest(request, "A non-SYSTEM role is required");
+      sendError(response, 400, "A non-SYSTEM role is required");
+      return;
+    }
+    const validation = validateApprovalCreatePayload(payload, actor);
+    if (!validation.success) {
+      logRejectedRequest(request, validation.error);
+      sendError(response, 400, validation.error);
+      return;
+    }
+
+    dependencies.eventBus.emit(validation.data);
+    sendSuccess(response, { accepted: true, recordId: validation.data.recordId });
     return;
   }
 
@@ -153,6 +204,34 @@ async function handleRequest(
       dependencies.store,
     );
     sendSuccess(response, completed);
+    return;
+  }
+
+  if (method === "POST" && url.pathname.startsWith("/records/") && isApprovalTransitionPath(url.pathname)) {
+    const payload = await readJsonBody(request);
+    const actor = extractRole(request, payload);
+    if (!actor || actor === "SYSTEM") {
+      logRejectedRequest(request, "A non-SYSTEM role is required");
+      sendError(response, 400, "A non-SYSTEM role is required");
+      return;
+    }
+
+    const recordId = getRecordIdFromTransitionPath(url.pathname);
+    if (!recordId) {
+      logRejectedRequest(request, "Invalid record id");
+      sendError(response, 400, "Invalid record id");
+      return;
+    }
+
+    const validation = validateApprovalTransitionPayload(payload, actor, recordId, url.pathname);
+    if (!validation.success) {
+      logRejectedRequest(request, validation.error);
+      sendError(response, 400, validation.error);
+      return;
+    }
+
+    dependencies.eventBus.emit(validation.data);
+    sendSuccess(response, { accepted: true, recordId });
     return;
   }
 
@@ -241,6 +320,28 @@ function getNotificationIdFromPath(pathname: string): string | null {
     return null;
   }
   return notificationId;
+}
+
+function getRecordIdFromPath(pathname: string): string | null {
+  const match = pathname.match(/^\/records\/([^/]+)$/);
+  const recordId = match?.[1] ?? null;
+  if (!recordId || !/^[A-Za-z0-9_-]+$/.test(recordId)) {
+    return null;
+  }
+  return recordId;
+}
+
+function isApprovalTransitionPath(pathname: string): boolean {
+  return /^\/records\/[^/]+\/(submit|approve|reject)$/.test(pathname);
+}
+
+function getRecordIdFromTransitionPath(pathname: string): string | null {
+  const match = pathname.match(/^\/records\/([^/]+)\/(submit|approve|reject)$/);
+  const recordId = match?.[1] ?? null;
+  if (!recordId || !/^[A-Za-z0-9_-]+$/.test(recordId)) {
+    return null;
+  }
+  return recordId;
 }
 
 function validateEventPayload(
@@ -337,6 +438,62 @@ function validateEventPayload(
     baseEvent.severity = value.severity;
   }
 
+  if ("recordId" in value && typeof value.recordId !== "undefined") {
+    if (typeof value.recordId !== "string" || !/^[A-Za-z0-9_-]+$/.test(value.recordId)) {
+      return { success: false, error: "recordId is invalid" };
+    }
+    baseEvent.recordId = value.recordId;
+  }
+
+  if ("recordKind" in value && typeof value.recordKind !== "undefined") {
+    if (!isValidRecordKind(value.recordKind)) {
+      return { success: false, error: "recordKind is invalid" };
+    }
+    baseEvent.recordKind = value.recordKind;
+  }
+
+  if ("recordTitle" in value && typeof value.recordTitle !== "undefined") {
+    if (typeof value.recordTitle !== "string" || value.recordTitle.trim() === "") {
+      return { success: false, error: "recordTitle is invalid" };
+    }
+    baseEvent.recordTitle = value.recordTitle;
+  }
+
+  if ("description" in value && typeof value.description !== "undefined") {
+    if (typeof value.description !== "string") {
+      return { success: false, error: "description is invalid" };
+    }
+    baseEvent.description = value.description;
+  }
+
+  if ("transitionId" in value && typeof value.transitionId !== "undefined") {
+    if (typeof value.transitionId !== "string" || value.transitionId.trim() === "") {
+      return { success: false, error: "transitionId is invalid" };
+    }
+    baseEvent.transitionId = value.transitionId;
+  }
+
+  if ("reason" in value && typeof value.reason !== "undefined") {
+    if (typeof value.reason !== "string") {
+      return { success: false, error: "reason is invalid" };
+    }
+    baseEvent.reason = value.reason;
+  }
+
+  if ("note" in value && typeof value.note !== "undefined") {
+    if (typeof value.note !== "string") {
+      return { success: false, error: "note is invalid" };
+    }
+    baseEvent.note = value.note;
+  }
+
+  if ("staleThresholdHours" in value && typeof value.staleThresholdHours !== "undefined") {
+    if (typeof value.staleThresholdHours !== "number" || Number.isNaN(value.staleThresholdHours)) {
+      return { success: false, error: "staleThresholdHours is invalid" };
+    }
+    baseEvent.staleThresholdHours = value.staleThresholdHours;
+  }
+
   const shapeError = validateEventShape(baseEvent);
   if (shapeError) {
     return { success: false, error: shapeError };
@@ -364,6 +521,20 @@ function validateEventShape(event: EngineEvent): string | null {
       return null;
     case "DEFECT_EVALUATION":
       return event.shipId && event.taskId ? null : "DEFECT_EVALUATION requires shipId and taskId";
+    case "APPROVAL_RECORD_CREATE":
+      if (!event.shipId || !event.recordId || !event.recordKind || !event.recordTitle || !event.actor) {
+        return "APPROVAL_RECORD_CREATE requires shipId, recordId, recordKind, recordTitle, and actor";
+      }
+      return null;
+    case "APPROVAL_RECORD_SUBMIT":
+    case "APPROVAL_RECORD_APPROVE":
+    case "APPROVAL_RECORD_REJECT":
+      if (!event.shipId || !event.recordId || !event.actor) {
+        return `${event.type} requires shipId, recordId, and actor`;
+      }
+      return null;
+    case "APPROVAL_RECORD_STALE_CHECK":
+      return event.shipId ? null : "APPROVAL_RECORD_STALE_CHECK requires shipId";
     default:
       return "Unknown eventType";
   }
@@ -376,7 +547,12 @@ function isValidEventType(value: unknown): value is EngineEvent["type"] {
     value === "PMS_TASK_GENERATE" ||
     value === "PMS_TASK_CHECK" ||
     value === "DEFECT_REPORTED" ||
-    value === "DEFECT_EVALUATION"
+    value === "DEFECT_EVALUATION" ||
+    value === "APPROVAL_RECORD_CREATE" ||
+    value === "APPROVAL_RECORD_SUBMIT" ||
+    value === "APPROVAL_RECORD_APPROVE" ||
+    value === "APPROVAL_RECORD_REJECT" ||
+    value === "APPROVAL_RECORD_STALE_CHECK"
   );
 }
 
@@ -416,4 +592,115 @@ function extractRole(request: IncomingMessage, body: unknown): RoleId | null {
         : null;
 
   return isValidRole(candidate) ? candidate : null;
+}
+
+function validateApprovalCreatePayload(
+  value: unknown,
+  actor: Exclude<RoleId, "SYSTEM">,
+): { success: true; data: EngineEvent } | { success: false; error: string } {
+  if (!isRecord(value)) {
+    return { success: false, error: "Approval record payload must be an object" };
+  }
+
+  if (typeof value.shipId !== "string" || value.shipId.trim() === "") {
+    return { success: false, error: "shipId is required" };
+  }
+
+  if (typeof value.recordId !== "string" || !/^[A-Za-z0-9_-]+$/.test(value.recordId)) {
+    return { success: false, error: "recordId is invalid" };
+  }
+
+  if (!isValidRecordKind(value.recordKind)) {
+    return { success: false, error: "recordKind is invalid" };
+  }
+
+  if (typeof value.recordTitle !== "string" || value.recordTitle.trim() === "") {
+    return { success: false, error: "recordTitle is required" };
+  }
+
+  if (typeof value.businessDate !== "string" || value.businessDate.trim() === "") {
+    return { success: false, error: "businessDate is required" };
+  }
+
+  if (typeof value.occurredAt !== "string" || value.occurredAt.trim() === "") {
+    return { success: false, error: "occurredAt is required" };
+  }
+
+  if ("description" in value && typeof value.description !== "undefined" && typeof value.description !== "string") {
+    return { success: false, error: "description must be a string" };
+  }
+
+  const event: EngineEvent = {
+    type: "APPROVAL_RECORD_CREATE",
+    shipId: value.shipId,
+    recordId: value.recordId,
+    recordKind: value.recordKind,
+    recordTitle: value.recordTitle,
+    businessDate: value.businessDate,
+    occurredAt: value.occurredAt,
+    actor,
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+  };
+
+  return { success: true, data: event };
+}
+
+function validateApprovalTransitionPayload(
+  value: unknown,
+  actor: Exclude<RoleId, "SYSTEM">,
+  recordId: string,
+  pathname: string,
+): { success: true; data: EngineEvent } | { success: false; error: string } {
+  if (!isRecord(value)) {
+    return { success: false, error: "Approval transition payload must be an object" };
+  }
+
+  if (typeof value.shipId !== "string" || value.shipId.trim() === "") {
+    return { success: false, error: "shipId is required" };
+  }
+
+  if (typeof value.businessDate !== "string" || value.businessDate.trim() === "") {
+    return { success: false, error: "businessDate is required" };
+  }
+
+  if (typeof value.occurredAt !== "string" || value.occurredAt.trim() === "") {
+    return { success: false, error: "occurredAt is required" };
+  }
+
+  if ("transitionId" in value && typeof value.transitionId !== "undefined" && typeof value.transitionId !== "string") {
+    return { success: false, error: "transitionId must be a string" };
+  }
+
+  if ("reason" in value && typeof value.reason !== "undefined" && typeof value.reason !== "string") {
+    return { success: false, error: "reason must be a string" };
+  }
+
+  if ("note" in value && typeof value.note !== "undefined" && typeof value.note !== "string") {
+    return { success: false, error: "note must be a string" };
+  }
+
+  const action = pathname.endsWith("/submit")
+    ? "APPROVAL_RECORD_SUBMIT"
+    : pathname.endsWith("/approve")
+      ? "APPROVAL_RECORD_APPROVE"
+      : "APPROVAL_RECORD_REJECT";
+
+  return {
+    success: true,
+    data: {
+      type: action,
+      shipId: value.shipId,
+      recordId,
+      businessDate: value.businessDate,
+      occurredAt: value.occurredAt,
+      actor,
+      ...(typeof value.transitionId === "string" ? { transitionId: value.transitionId } : {}),
+      ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+      ...(typeof value.note === "string" ? { note: value.note } : {}),
+    },
+  };
+}
+
+function isValidRecordKind(value: unknown): value is FleetRecordKind {
+  return value === "MAINTENANCE_LOG" || value === "DEFECT" || value === "WORK_REQUEST";
 }
