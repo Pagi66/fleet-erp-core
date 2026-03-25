@@ -1,0 +1,292 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #e7eef7;
+  background:
+    radial-gradient(circle at top left, rgba(73, 132, 199, 0.25), transparent 28%),
+    linear-gradient(180deg, #0c1b2a 0%, #101e2f 45%, #0f1723 100%);
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid rgba(167, 191, 215, 0.16);
+  background: rgba(10, 20, 32, 0.72);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar h1,
+.card h2 {
+  margin: 0;
+}
+
+.eyebrow {
+  margin: 0 0 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  color: #8cb8df;
+}
+
+.nav {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.nav-link,
+.button-link,
+button {
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 198, 223, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: #eef5fb;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.nav-link:hover,
+.button-link:hover,
+button:hover {
+  background: rgba(117, 168, 211, 0.18);
+  border-color: rgba(117, 168, 211, 0.35);
+  transform: translateY(-1px);
+}
+
+.nav-link-active {
+  background: rgba(117, 168, 211, 0.24);
+  border-color: rgba(117, 168, 211, 0.4);
+}
+
+.container {
+  width: min(1120px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2rem 0 3rem;
+}
+
+.page-grid {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.card {
+  background: rgba(16, 28, 43, 0.78);
+  border: 1px solid rgba(180, 201, 221, 0.14);
+  border-radius: 20px;
+  padding: 1.25rem;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.2);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.muted {
+  color: #9bb0c4;
+  margin: 0.3rem 0 0;
+}
+
+.empty-state {
+  margin: 0;
+  color: #b5c6d6;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ship-link {
+  font-weight: 700;
+  color: #f3f8fd;
+}
+
+.ship-link:hover {
+  color: #8ec5ff;
+}
+
+.pill-group {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6eef7;
+  font-size: 0.85rem;
+}
+
+.pill-stable,
+.pill-info {
+  background: rgba(74, 181, 136, 0.18);
+  color: #8cf0bf;
+}
+
+.pill-attention,
+.pill-warning {
+  background: rgba(224, 169, 72, 0.18);
+  color: #ffd891;
+}
+
+.pill-critical {
+  background: rgba(217, 82, 82, 0.18);
+  color: #ffaaaa;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.85rem;
+}
+
+.metric {
+  padding: 1rem;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.metric-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #9bb0c4;
+  font-size: 0.85rem;
+}
+
+.event-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.event-form label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.event-form input,
+.event-form textarea {
+  width: 100%;
+  border: 1px solid rgba(180, 201, 221, 0.18);
+  background: rgba(9, 17, 27, 0.8);
+  color: #eef5fb;
+  border-radius: 14px;
+  padding: 0.85rem 0.95rem;
+}
+
+.event-form textarea {
+  resize: vertical;
+  min-height: 180px;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.status-error,
+.status-success {
+  margin: 0;
+}
+
+.status-error {
+  color: #ff9f9f;
+}
+
+.status-success {
+  color: #97ecba;
+}
+
+.timestamp {
+  color: #b9cadd;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .topbar,
+  .card-header,
+  .list-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .container {
+    width: min(100% - 1rem, 1120px);
+  }
+
+  .pill-group {
+    justify-content: flex-start;
+  }
+
+  .timestamp {
+    white-space: normal;
+  }
+}
