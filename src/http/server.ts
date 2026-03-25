@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, Server, ServerResponse } from "http";
 import { CompleteTaskAction } from "../actions/complete-task.action";
 import { config } from "../core/config";
 import { logger } from "../core/logger";
-import { AssignedRoleId, EngineEvent, FleetRecordKind, RoleId } from "../core/types";
+import { ActorContext, AssignedRoleId, EngineEvent, FleetRecordKind, RoleId } from "../core/types";
 import { EventBus } from "../events/event-system";
 import { InMemoryStore } from "../core/store";
 
@@ -94,27 +94,211 @@ async function handleRequest(
   }
 
   if (method === "GET" && url.pathname === "/records") {
-    const shipId = url.searchParams.get("shipId");
     const role = url.searchParams.get("role");
-    if (!shipId || !role || !isValidAssignedRole(role)) {
-      logRejectedRequest(request, "shipId and role are required");
-      sendError(response, 400, "shipId and role are required");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
       return;
     }
-    sendSuccess(response, dependencies.store.getApprovalRecordsVisibleToRole(shipId, role));
+    try {
+      const actor = getActorContext(url, role);
+      const shipId = actor.shipId;
+      if (!shipId) {
+        logRejectedRequest(request, "shipId is required");
+        sendError(response, 400, "shipId is required");
+        return;
+      }
+      sendSuccess(response, dependencies.store.getApprovalRecordsVisibleToRole(shipId, actor.role));
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid actor context");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid actor context");
+    }
     return;
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/dashboard") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      sendSuccess(response, dependencies.store.getApprovalDashboardSummary(actor, getAwarenessOptions(url)));
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/summary") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      const summary = dependencies.store.getApprovalDashboardSummary(actor, getAwarenessOptions(url));
+      sendSuccess(response, {
+        role: summary.role,
+        ...(summary.shipId ? { shipId: summary.shipId } : {}),
+        generatedAt: summary.generatedAt,
+        totals: summary.totals,
+        countsByStatus: summary.countsByStatus,
+        countsByRole: summary.countsByRole,
+        countsByShip: summary.countsByShip,
+        topActionableRecords: summary.topActionableRecords,
+      });
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/visible") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      sendSuccess(response, dependencies.store.getApprovalAwarenessRecords(actor, getAwarenessOptions(url)));
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/owned") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      const records = dependencies.store
+        .getApprovalAwarenessRecords(actor, getAwarenessOptions(url))
+        .filter((record) => record.bucket === "OWNED" || record.bucket === "PENDING_MY_ACTION");
+      sendSuccess(response, records);
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/actionable") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      const limit = getOptionalLimit(url);
+      const records = dependencies.store
+        .getApprovalAwarenessRecords(actor, getAwarenessOptions(url))
+        .filter((record) => record.bucket === "PENDING_MY_ACTION");
+      sendSuccess(response, typeof limit === "number" ? records.slice(0, limit) : records);
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/stale") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      const limit = getOptionalLimit(url);
+      const records = dependencies.store
+        .getApprovalAwarenessRecords(actor, getAwarenessOptions(url))
+        .filter((record) => record.computed.isStale)
+        .sort((left, right) => {
+          const leftAge = left.ageHoursSinceLastAction ?? Number.NEGATIVE_INFINITY;
+          const rightAge = right.ageHoursSinceLastAction ?? Number.NEGATIVE_INFINITY;
+          if (leftAge !== rightAge) {
+            return rightAge - leftAge;
+          }
+          return left.createdAt.localeCompare(right.createdAt);
+        });
+      sendSuccess(response, typeof limit === "number" ? records.slice(0, limit) : records);
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/awareness/records/rejected") {
+    const role = url.searchParams.get("role");
+    if (!role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "role is required");
+      sendError(response, 400, "role is required");
+      return;
+    }
+
+    try {
+      const actor = getActorContext(url, role);
+      const limit = getOptionalLimit(url);
+      const records = dependencies.store
+        .getApprovalAwarenessRecords(actor, getAwarenessOptions(url))
+        .filter((record) => record.bucket === "RECENTLY_REJECTED");
+      sendSuccess(response, typeof limit === "number" ? records.slice(0, limit) : records);
+      return;
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid awareness query");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid awareness query");
+      return;
+    }
   }
 
   if (method === "GET" && url.pathname.startsWith("/records/")) {
     const recordId = getRecordIdFromPath(url.pathname);
-    const shipId = url.searchParams.get("shipId");
     const role = url.searchParams.get("role");
-    if (!recordId || !shipId || !role || !isValidAssignedRole(role)) {
-      logRejectedRequest(request, "recordId, shipId, and role are required");
-      sendError(response, 400, "recordId, shipId, and role are required");
+    if (!recordId || !role || !isValidAssignedRole(role)) {
+      logRejectedRequest(request, "recordId and role are required");
+      sendError(response, 400, "recordId and role are required");
       return;
     }
-    const recordView = dependencies.store.getApprovalRecordViewVisibleToRole(recordId, shipId, role);
+    let recordView;
+    try {
+      const actor = getActorContext(url, role);
+      recordView = dependencies.store.getApprovalRecordViewForActor(recordId, actor);
+    } catch (error) {
+      logRejectedRequest(request, error instanceof Error ? error.message : "Invalid actor context");
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid actor context");
+      return;
+    }
     if (!recordView.record) {
       logRejectedRequest(request, "Record not found");
       sendError(response, 404, "Record not found");
@@ -568,6 +752,71 @@ function isValidAssignedRole(value: unknown): value is AssignedRoleId {
 
 function isValidRole(value: unknown): value is RoleId {
   return isValidAssignedRole(value) || value === "SYSTEM";
+}
+
+function getActorContext(url: URL, role: AssignedRoleId): ActorContext {
+  const shipId = getOptionalShipId(url);
+  if (
+    (role === "MARINE_ENGINEERING_OFFICER" ||
+      role === "WEAPON_ELECTRICAL_OFFICER" ||
+      role === "COMMANDING_OFFICER") &&
+    !shipId
+  ) {
+    throw new Error(`shipId is required for role ${role}`);
+  }
+
+  return {
+    role,
+    ...(shipId ? { shipId } : {}),
+  };
+}
+
+function getAwarenessOptions(url: URL): {
+  shipId?: string;
+  now?: string;
+  staleThresholdHours?: number;
+  pendingThresholdHours?: number;
+  recentlyRejectedWindowHours?: number;
+  topActionableLimit?: number;
+} {
+  const shipId = getOptionalShipId(url);
+  const now = url.searchParams.get("now");
+  const staleThresholdHours = getOptionalNumber(url, "thresholdHours");
+  const pendingThresholdHours = getOptionalNumber(url, "pendingThresholdHours");
+  const recentlyRejectedWindowHours = getOptionalNumber(url, "windowHours");
+  const topActionableLimit = getOptionalLimit(url);
+
+  return {
+    ...(shipId ? { shipId } : {}),
+    ...(now ? { now } : {}),
+    ...(typeof staleThresholdHours === "number" ? { staleThresholdHours } : {}),
+    ...(typeof pendingThresholdHours === "number" ? { pendingThresholdHours } : {}),
+    ...(typeof recentlyRejectedWindowHours === "number" ? { recentlyRejectedWindowHours } : {}),
+    ...(typeof topActionableLimit === "number" ? { topActionableLimit } : {}),
+  };
+}
+
+function getOptionalShipId(url: URL): string | undefined {
+  const shipId = url.searchParams.get("shipId");
+  return shipId && shipId.trim() !== "" ? shipId : undefined;
+}
+
+function getOptionalLimit(url: URL): number | undefined {
+  return getOptionalNumber(url, "limit");
+}
+
+function getOptionalNumber(url: URL, name: string): number | undefined {
+  const raw = url.searchParams.get(name);
+  if (raw === null) {
+    return undefined;
+  }
+
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(`${name} must be a number`);
+  }
+
+  return value;
 }
 
 function logRejectedRequest(request: IncomingMessage, reason: string): void {

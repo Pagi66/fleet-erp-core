@@ -10,6 +10,11 @@ export type RoleId =
 
 export type AssignedRoleId = Exclude<RoleId, "SYSTEM">;
 
+export interface ActorContext {
+  role: AssignedRoleId;
+  shipId?: string;
+}
+
 export type EngineEventType =
   | "DAILY_LOG_CHECK_DUE"
   | "DAILY_LOG_ESCALATION_DUE"
@@ -54,6 +59,17 @@ export type EscalationLevel = "NONE" | "MCC" | "LOG_COMD";
 export type ApprovalStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 
 export type FleetRecordKind = "MAINTENANCE_LOG" | "DEFECT" | "WORK_REQUEST";
+
+export type AwarenessBucket =
+  | "OWNED"
+  | "PENDING_MY_ACTION"
+  | "RECENTLY_REJECTED"
+  | "VISIBLE_NOT_OWNED";
+
+export type AttentionSignal =
+  | "STALE"
+  | "BLOCKED_BY_REJECTION"
+  | "PENDING_TOO_LONG";
 
 export type TaskHistoryType =
   | "CREATED"
@@ -322,6 +338,74 @@ export interface TaskSnapshot {
 export interface ApprovalRecordView {
   record: FleetRecord | null;
   history: ApprovalHistoryEntry[];
+}
+
+export interface ApprovalAwarenessComputed {
+  isStale: boolean;
+  isPendingTooLong: boolean;
+}
+
+export interface ApprovalAwarenessRecord {
+  recordId: string;
+  shipId: string;
+  shipName: string;
+  shipClass: string;
+  kind: FleetRecordKind;
+  title: string;
+  businessDate: string;
+  originRole: AssignedRoleId;
+  status: ApprovalStatus;
+  currentOwner: AssignedRoleId;
+  approvalLevel: number;
+  currentStepIndex: number;
+  chain: AssignedRoleId[];
+  visibleTo: AssignedRoleId[];
+  createdAt: string;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  lastActionAt: string | null;
+  lastActionBy: RoleId | null;
+  lastActionReason: string | null;
+  lastActionNote: string | null;
+  lastHistoryAction: ApprovalHistoryType | null;
+  lastHistoryAt: string | null;
+  previousOwner: AssignedRoleId | null;
+  bucket: AwarenessBucket;
+  attentionSignals: AttentionSignal[];
+  ageHoursSinceLastAction: number | null;
+  ageHoursSinceSubmission: number | null;
+  computed: ApprovalAwarenessComputed;
+}
+
+export interface ApprovalAwarenessQueryOptions {
+  shipId?: string;
+  now?: string;
+  staleThresholdHours?: number;
+  pendingThresholdHours?: number;
+  recentlyRejectedWindowHours?: number;
+  topActionableLimit?: number;
+}
+
+export interface RoleDashboardSummary {
+  role: AssignedRoleId;
+  shipId?: string;
+  generatedAt: string;
+  totals: {
+    visible: number;
+    owned: number;
+    needingMyAction: number;
+    recentlyRejected: number;
+    visibleNotOwned: number;
+    stale: number;
+    blockedByRejection: number;
+    pendingTooLong: number;
+  };
+  countsByStatus: Record<ApprovalStatus, number>;
+  countsByRole: Record<AssignedRoleId, number>;
+  countsByShip: Record<string, number>;
+  topActionableRecords: ApprovalAwarenessRecord[];
+  records: ApprovalAwarenessRecord[];
 }
 
 export const REQUIRED_DAILY_LOGS: LogType[] = [

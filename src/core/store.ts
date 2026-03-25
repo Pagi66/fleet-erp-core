@@ -11,12 +11,17 @@ import { dirname, resolve } from "path";
 import { config } from "./config";
 import { logger } from "./logger";
 import {
+  ActorContext,
+  ApprovalAwarenessQueryOptions,
+  ApprovalAwarenessRecord,
   ApprovalHistoryEntry,
   ApprovalHistoryType,
+  ApprovalStatus,
   ApprovalRecordSnapshot,
   ApprovalRecordView,
-  ApprovalStatus,
   AssignedRoleId,
+  AttentionSignal,
+  AwarenessBucket,
   DailyComplianceState,
   EscalationState,
   FleetRecord,
@@ -25,6 +30,7 @@ import {
   LogType,
   Notification,
   REQUIRED_DAILY_LOGS,
+  RoleDashboardSummary,
   RoleId,
   Ship,
   StoreSnapshot,
@@ -36,6 +42,20 @@ import {
 } from "./types";
 
 const STORE_STATE_VERSION = 8;
+const DEFAULT_AWARENESS_STALE_THRESHOLD_HOURS = 24;
+const DEFAULT_AWARENESS_PENDING_THRESHOLD_HOURS = 48;
+const DEFAULT_AWARENESS_REJECTED_WINDOW_HOURS = 72;
+const DEFAULT_AWARENESS_TOP_ACTIONABLE_LIMIT = 5;
+
+interface NormalizedAwarenessOptions {
+  shipId?: string;
+  now: string;
+  nowMs: number;
+  staleThresholdHours: number;
+  pendingThresholdHours: number;
+  recentlyRejectedWindowHours: number;
+  topActionableLimit: number;
+}
 
 interface ProcessedApprovalTransition {
   recordId: string;
@@ -512,6 +532,143 @@ export class InMemoryStore {
     return view;
   }
 
+  getApprovalRecordViewForActor(
+    recordId: string,
+    actor: ActorContext,
+  ): ApprovalRecordView {
+    const normalizedActor = this.normalizeActorContext(actor);
+    const record = this.getApprovalRecord(recordId);
+    if (!record) {
+      return {
+        record: null,
+        history: [],
+      };
+    }
+
+    if (!this.isRecordVisibleToActor(record, normalizedActor)) {
+      return {
+        record: null,
+        history: [],
+      };
+    }
+
+    return {
+      record,
+      history: [...(this.approvalHistoryById.get(recordId) ?? [])],
+    };
+  }
+
+  getApprovalAwarenessRecords(
+    actor: ActorContext,
+    options: ApprovalAwarenessQueryOptions = {},
+  ): ApprovalAwarenessRecord[] {
+    const normalizedActor = this.normalizeActorContext(actor);
+    const normalized = this.normalizeAwarenessOptions(options);
+    const visibleRecords = this.getVisibleApprovalRecordsForAwareness(normalizedActor, normalized);
+    const projected = visibleRecords.map((record) =>
+      this.projectApprovalAwarenessRecord(record, normalizedActor.role, normalized),
+    );
+    const sorted = projected.sort((left, right) =>
+      this.compareAwarenessRecords(left, right),
+    );
+    this.assertApprovalAwarenessRecords(normalizedActor, sorted);
+    return sorted;
+  }
+
+  getApprovalDashboardSummary(
+    actor: ActorContext,
+    options: ApprovalAwarenessQueryOptions = {},
+  ): RoleDashboardSummary {
+    const normalizedActor = this.normalizeActorContext(actor);
+    const normalized = this.normalizeAwarenessOptions(options);
+    const records = this.getApprovalAwarenessRecords(normalizedActor, normalized);
+    const scopedShipId = this.resolveActorScopedShipId(normalizedActor, normalized);
+    const countsByStatus: Record<ApprovalStatus, number> = {
+      DRAFT: 0,
+      SUBMITTED: 0,
+      APPROVED: 0,
+      REJECTED: 0,
+    };
+    const countsByRole: Record<AssignedRoleId, number> = {
+      COMMANDING_OFFICER: 0,
+      MARINE_ENGINEERING_OFFICER: 0,
+      WEAPON_ELECTRICAL_OFFICER: 0,
+      FLEET_SUPPORT_GROUP: 0,
+      LOGISTICS_COMMAND: 0,
+    };
+    const countsByShip: Record<string, number> = {};
+
+    for (const record of records) {
+      countsByStatus[record.status] += 1;
+      countsByRole[record.currentOwner] += 1;
+      countsByShip[record.shipId] = (countsByShip[record.shipId] ?? 0) + 1;
+    }
+
+    const summary: RoleDashboardSummary = {
+      role: normalizedActor.role,
+      ...(scopedShipId ? { shipId: scopedShipId } : {}),
+      generatedAt: normalized.now,
+      totals: {
+        visible: records.length,
+        owned: records.filter((record) => record.bucket === "OWNED").length,
+        needingMyAction: records.filter((record) => record.bucket === "PENDING_MY_ACTION").length,
+        recentlyRejected: records.filter((record) => record.bucket === "RECENTLY_REJECTED").length,
+        visibleNotOwned: records.filter((record) => record.bucket === "VISIBLE_NOT_OWNED").length,
+        stale: records.filter((record) => record.computed.isStale).length,
+        blockedByRejection: records.filter((record) =>
+          record.attentionSignals.includes("BLOCKED_BY_REJECTION")).length,
+        pendingTooLong: records.filter((record) => record.computed.isPendingTooLong).length,
+      },
+      countsByStatus,
+      countsByRole,
+      countsByShip,
+      topActionableRecords: records
+        .filter((record) => record.bucket === "PENDING_MY_ACTION")
+        .slice(0, normalized.topActionableLimit),
+      records,
+    };
+
+    this.assertApprovalAwarenessSummary(summary, normalizedActor);
+    return summary;
+  }
+
+  getTopActionableRecords(
+    actor: ActorContext,
+    limit = DEFAULT_AWARENESS_TOP_ACTIONABLE_LIMIT,
+  ): ApprovalAwarenessRecord[] {
+    const records = this.getApprovalAwarenessRecords(actor, {
+      topActionableLimit: limit,
+    });
+    return records
+      .filter((record) => record.bucket === "PENDING_MY_ACTION")
+      .slice(0, limit);
+  }
+
+  getTopStaleRecords(
+    actor: ActorContext,
+    limit = DEFAULT_AWARENESS_TOP_ACTIONABLE_LIMIT,
+  ): ApprovalAwarenessRecord[] {
+    const records = this.getApprovalAwarenessRecords(actor, {
+      topActionableLimit: limit,
+    });
+    return [...records]
+      .filter((record) => record.computed.isStale)
+      .sort((left, right) => this.compareByAgeThenCreatedAt(left, right))
+      .slice(0, limit);
+  }
+
+  getRecentRejections(
+    actor: ActorContext,
+    limit = DEFAULT_AWARENESS_TOP_ACTIONABLE_LIMIT,
+  ): ApprovalAwarenessRecord[] {
+    const records = this.getApprovalAwarenessRecords(actor, {
+      topActionableLimit: limit,
+    });
+    return records
+      .filter((record) => record.bucket === "RECENTLY_REJECTED")
+      .slice(0, limit);
+  }
+
   getStaleApprovalRecordsByShip(
     shipId: string,
     occurredAt: string,
@@ -851,6 +1008,457 @@ export class InMemoryStore {
         submittedAt,
         submittedByRole,
       });
+    }
+  }
+
+  private normalizeAwarenessOptions(
+    options: ApprovalAwarenessQueryOptions,
+  ): NormalizedAwarenessOptions {
+    if (typeof options.shipId === "string") {
+      this.assertValidShipId(options.shipId);
+    }
+
+    const now = options.now ?? new Date().toISOString();
+    const nowMs = new Date(now).getTime();
+    if (Number.isNaN(nowMs)) {
+      throw new Error(`Invalid awareness timestamp: ${now}`);
+    }
+
+    const staleThresholdHours = options.staleThresholdHours ?? DEFAULT_AWARENESS_STALE_THRESHOLD_HOURS;
+    const pendingThresholdHours = options.pendingThresholdHours ?? DEFAULT_AWARENESS_PENDING_THRESHOLD_HOURS;
+    const recentlyRejectedWindowHours =
+      options.recentlyRejectedWindowHours ?? DEFAULT_AWARENESS_REJECTED_WINDOW_HOURS;
+    const topActionableLimit = options.topActionableLimit ?? DEFAULT_AWARENESS_TOP_ACTIONABLE_LIMIT;
+
+    this.assertPositiveNumber(staleThresholdHours, "staleThresholdHours");
+    this.assertPositiveNumber(pendingThresholdHours, "pendingThresholdHours");
+    this.assertPositiveNumber(recentlyRejectedWindowHours, "recentlyRejectedWindowHours");
+    this.assertPositiveInteger(topActionableLimit, "topActionableLimit");
+
+    return {
+      ...(typeof options.shipId === "string" ? { shipId: options.shipId } : {}),
+      now,
+      nowMs,
+      staleThresholdHours,
+      pendingThresholdHours,
+      recentlyRejectedWindowHours,
+      topActionableLimit,
+    };
+  }
+
+  private normalizeActorContext(actor: ActorContext): Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId"> {
+    this.assertValidAssignedRole(actor.role, "actor.role");
+
+    if (typeof actor.shipId === "string") {
+      this.assertValidShipId(actor.shipId);
+    }
+
+    if (this.requiresShipScopedVisibility(actor.role)) {
+      if (!actor.shipId) {
+        throw new Error(`shipId is required for role ${actor.role}`);
+      }
+      return {
+        role: actor.role,
+        shipId: actor.shipId,
+      };
+    }
+
+    return {
+      role: actor.role,
+      ...(actor.shipId ? { shipId: actor.shipId } : {}),
+    };
+  }
+
+  private requiresShipScopedVisibility(role: AssignedRoleId): boolean {
+    return (
+      role === "MARINE_ENGINEERING_OFFICER" ||
+      role === "WEAPON_ELECTRICAL_OFFICER" ||
+      role === "COMMANDING_OFFICER"
+    );
+  }
+
+  private resolveActorScopedShipId(
+    actor: Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId">,
+    options: NormalizedAwarenessOptions,
+  ): string | undefined {
+    if (this.requiresShipScopedVisibility(actor.role)) {
+      return actor.shipId;
+    }
+
+    if (actor.shipId && options.shipId && actor.shipId !== options.shipId) {
+      throw new Error(`shipId mismatch for actor ${actor.role}: ${actor.shipId} != ${options.shipId}`);
+    }
+
+    return options.shipId ?? actor.shipId;
+  }
+
+  private getVisibleApprovalRecordsForAwareness(
+    actor: Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId">,
+    options: NormalizedAwarenessOptions,
+  ): FleetRecord[] {
+    const scopedShipId = this.resolveActorScopedShipId(actor, options);
+    const records = scopedShipId
+      ? this.getApprovalRecordsVisibleToRole(scopedShipId, actor.role)
+      : [...this.recordsById.values()].filter((record) => record.visibleTo.includes(actor.role));
+
+    if (this.requiresShipScopedVisibility(actor.role)) {
+      return records.filter((record) => record.shipId === actor.shipId);
+    }
+
+    return scopedShipId ? records.filter((record) => record.shipId === scopedShipId) : records;
+  }
+
+  private isRecordVisibleToActor(
+    record: FleetRecord,
+    actor: Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId">,
+  ): boolean {
+    if (!record.visibleTo.includes(actor.role)) {
+      return false;
+    }
+
+    if (this.requiresShipScopedVisibility(actor.role)) {
+      return record.shipId === actor.shipId;
+    }
+
+    if (actor.shipId) {
+      return record.shipId === actor.shipId;
+    }
+
+    return true;
+  }
+
+  private projectApprovalAwarenessRecord(
+    record: FleetRecord,
+    role: AssignedRoleId,
+    options: NormalizedAwarenessOptions,
+  ): ApprovalAwarenessRecord {
+    if (!record.visibleTo.includes(role)) {
+      throw new Error(`Awareness projection cannot include invisible record: ${record.id}`);
+    }
+
+    const ship = this.getShip(record.shipId);
+    if (!ship) {
+      throw new Error(`Ship not found for awareness projection: ${record.shipId}`);
+    }
+
+    const history = [...(this.approvalHistoryById.get(record.id) ?? [])];
+    const lastHistory = history.length > 0 ? history[history.length - 1] : null;
+    const ageHoursSinceLastAction = this.getElapsedHours(options.nowMs, record.approval.lastActionAt);
+    const ageHoursSinceSubmission = this.getElapsedHours(options.nowMs, record.approval.submittedAt);
+    const isStale = this.isAwarenessRecordStale(record, options.nowMs, options.staleThresholdHours);
+    const isPendingTooLong = this.isAwarenessRecordPendingTooLong(
+      record,
+      options.nowMs,
+      options.pendingThresholdHours,
+    );
+    const attentionSignals = this.resolveAwarenessAttentionSignals(
+      record,
+      isStale,
+      isPendingTooLong,
+    );
+    const bucket = this.resolveAwarenessBucket(record, role, options.nowMs, options.recentlyRejectedWindowHours);
+
+    return {
+      recordId: record.id,
+      shipId: record.shipId,
+      shipName: ship.name,
+      shipClass: ship.classType,
+      kind: record.kind,
+      title: record.title,
+      businessDate: record.businessDate,
+      originRole: record.originRole,
+      status: record.approval.status,
+      currentOwner: record.approval.currentOwner,
+      approvalLevel: record.approval.approvalLevel,
+      currentStepIndex: record.approval.currentStepIndex,
+      chain: [...record.approval.chain],
+      visibleTo: [...record.visibleTo],
+      createdAt: record.createdAt,
+      submittedAt: record.approval.submittedAt,
+      approvedAt: record.approval.approvedAt,
+      rejectedAt: record.approval.rejectedAt,
+      lastActionAt: record.approval.lastActionAt,
+      lastActionBy: record.approval.lastActionBy,
+      lastActionReason: record.approval.lastActionReason,
+      lastActionNote: record.approval.lastActionNote,
+      lastHistoryAction: lastHistory?.actionType ?? null,
+      lastHistoryAt: lastHistory?.timestamp ?? null,
+      previousOwner: this.resolveAwarenessPreviousOwner(record.approval.currentOwner, history),
+      bucket,
+      attentionSignals,
+      ageHoursSinceLastAction,
+      ageHoursSinceSubmission,
+      computed: {
+        isStale,
+        isPendingTooLong,
+      },
+    };
+  }
+
+  private resolveAwarenessBucket(
+    record: FleetRecord,
+    role: AssignedRoleId,
+    nowMs: number,
+    recentlyRejectedWindowHours: number,
+  ): AwarenessBucket {
+    if (record.approval.currentOwner === role && record.approval.status === "SUBMITTED") {
+      return "PENDING_MY_ACTION";
+    }
+
+    if (this.isRecentlyRejected(record, nowMs, recentlyRejectedWindowHours)) {
+      return "RECENTLY_REJECTED";
+    }
+
+    if (record.approval.currentOwner === role) {
+      return "OWNED";
+    }
+
+    return "VISIBLE_NOT_OWNED";
+  }
+
+  private resolveAwarenessAttentionSignals(
+    record: FleetRecord,
+    isStale: boolean,
+    isPendingTooLong: boolean,
+  ): AttentionSignal[] {
+    const signals: AttentionSignal[] = [];
+
+    if (isStale) {
+      signals.push("STALE");
+    }
+
+    if (record.approval.status === "REJECTED") {
+      signals.push("BLOCKED_BY_REJECTION");
+    }
+
+    if (isPendingTooLong) {
+      signals.push("PENDING_TOO_LONG");
+    }
+
+    return signals;
+  }
+
+  private isAwarenessRecordPendingTooLong(
+    record: FleetRecord,
+    nowMs: number,
+    pendingThresholdHours: number,
+  ): boolean {
+    if (record.approval.status !== "SUBMITTED" || record.approval.submittedAt === null) {
+      return false;
+    }
+
+    const ageHoursSinceSubmission = this.getElapsedHours(nowMs, record.approval.submittedAt);
+    return ageHoursSinceSubmission !== null && ageHoursSinceSubmission >= pendingThresholdHours;
+  }
+
+  private isAwarenessRecordStale(
+    record: FleetRecord,
+    nowMs: number,
+    staleThresholdHours: number,
+  ): boolean {
+    if (record.approval.status === "APPROVED" || record.approval.status === "REJECTED") {
+      return false;
+    }
+
+    if (record.approval.lastActionAt === null) {
+      return false;
+    }
+
+    const ageHoursSinceLastAction = this.getElapsedHours(nowMs, record.approval.lastActionAt);
+    return ageHoursSinceLastAction !== null && ageHoursSinceLastAction >= staleThresholdHours;
+  }
+
+  private isRecentlyRejected(
+    record: FleetRecord,
+    nowMs: number,
+    recentlyRejectedWindowHours: number,
+  ): boolean {
+    if (record.approval.status !== "REJECTED" || record.approval.rejectedAt === null) {
+      return false;
+    }
+
+    const ageHoursSinceRejection = this.getElapsedHours(nowMs, record.approval.rejectedAt);
+    return ageHoursSinceRejection !== null && ageHoursSinceRejection <= recentlyRejectedWindowHours;
+  }
+
+  private resolveAwarenessPreviousOwner(
+    currentOwner: AssignedRoleId,
+    history: ApprovalHistoryEntry[],
+  ): AssignedRoleId | null {
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const entry = history[index];
+      if (!entry) {
+        continue;
+      }
+
+      if (entry.actionType === "INVALID_ATTEMPT" || entry.actionType === "STALE_REMINDER_SENT") {
+        continue;
+      }
+
+      if (entry.actionType !== "SUBMITTED" && entry.actionType !== "APPROVED") {
+        continue;
+      }
+
+      if (entry.previousState.currentOwner === entry.newState.currentOwner) {
+        continue;
+      }
+
+      if (entry.previousState.currentOwner === currentOwner) {
+        return entry.newState.currentOwner;
+      }
+
+      if (entry.newState.currentOwner === currentOwner) {
+        return entry.previousState.currentOwner;
+      }
+    }
+
+    return null;
+  }
+
+  private compareAwarenessRecords(
+    left: ApprovalAwarenessRecord,
+    right: ApprovalAwarenessRecord,
+  ): number {
+    const priorityDifference = this.getAwarenessSortPriority(left) - this.getAwarenessSortPriority(right);
+    if (priorityDifference !== 0) {
+      return priorityDifference;
+    }
+
+    return this.compareByAgeThenCreatedAt(left, right);
+  }
+
+  private compareByAgeThenCreatedAt(
+    left: Pick<ApprovalAwarenessRecord, "ageHoursSinceLastAction" | "createdAt">,
+    right: Pick<ApprovalAwarenessRecord, "ageHoursSinceLastAction" | "createdAt">,
+  ): number {
+    const leftAge = left.ageHoursSinceLastAction ?? Number.NEGATIVE_INFINITY;
+    const rightAge = right.ageHoursSinceLastAction ?? Number.NEGATIVE_INFINITY;
+    if (leftAge !== rightAge) {
+      return rightAge - leftAge;
+    }
+
+    return left.createdAt.localeCompare(right.createdAt);
+  }
+
+  private getAwarenessSortPriority(record: ApprovalAwarenessRecord): number {
+    if (record.bucket === "PENDING_MY_ACTION" && record.attentionSignals.length > 0) {
+      return 0;
+    }
+
+    switch (record.bucket) {
+      case "PENDING_MY_ACTION":
+        return 1;
+      case "RECENTLY_REJECTED":
+        return 2;
+      case "OWNED":
+        return 3;
+      case "VISIBLE_NOT_OWNED":
+        return 4;
+      default:
+        return 5;
+    }
+  }
+
+  private getElapsedHours(nowMs: number, timestamp: string | null): number | null {
+    if (timestamp === null) {
+      return null;
+    }
+
+    const timestampMs = new Date(timestamp).getTime();
+    if (Number.isNaN(timestampMs)) {
+      return null;
+    }
+
+    return Math.max(0, Math.floor((nowMs - timestampMs) / (60 * 60 * 1000)));
+  }
+
+  private assertApprovalAwarenessRecords(
+    actor: Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId">,
+    records: ApprovalAwarenessRecord[],
+  ): void {
+    const seenRecordIds = new Set<string>();
+
+    for (const record of records) {
+      if (!record.visibleTo.includes(actor.role)) {
+        throw new Error(`Awareness record leaked outside visibility scope: ${record.recordId}`);
+      }
+      if (this.requiresShipScopedVisibility(actor.role) && record.shipId !== actor.shipId) {
+        throw new Error(`Awareness record leaked outside actor ship scope: ${record.recordId}`);
+      }
+
+      if (seenRecordIds.has(record.recordId)) {
+        throw new Error(`Duplicate awareness record detected: ${record.recordId}`);
+      }
+      seenRecordIds.add(record.recordId);
+
+      const resolvedBucket = (() => {
+        switch (record.bucket) {
+          case "PENDING_MY_ACTION":
+            return record.currentOwner === actor.role && record.status === "SUBMITTED";
+          case "RECENTLY_REJECTED":
+            return record.status === "REJECTED" && record.rejectedAt !== null;
+          case "OWNED":
+            return record.currentOwner === actor.role;
+          case "VISIBLE_NOT_OWNED":
+            return record.currentOwner !== actor.role;
+          default:
+            return false;
+        }
+      })();
+
+      if (!resolvedBucket) {
+        throw new Error(`Awareness bucket integrity check failed: ${record.recordId}`);
+      }
+
+      if (record.computed.isPendingTooLong !== record.attentionSignals.includes("PENDING_TOO_LONG")) {
+        throw new Error(`Pending-too-long mismatch in awareness record: ${record.recordId}`);
+      }
+
+      if (record.computed.isStale !== record.attentionSignals.includes("STALE")) {
+        throw new Error(`Stale mismatch in awareness record: ${record.recordId}`);
+      }
+    }
+  }
+
+  private assertApprovalAwarenessSummary(
+    summary: RoleDashboardSummary,
+    actor: Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId">,
+  ): void {
+    const records = summary.records;
+    const byStatus = Object.values(summary.countsByStatus).reduce((sum, count) => sum + count, 0);
+    const byRole = Object.values(summary.countsByRole).reduce((sum, count) => sum + count, 0);
+    const byShip = Object.values(summary.countsByShip).reduce((sum, count) => sum + count, 0);
+
+    if (summary.totals.visible !== records.length) {
+      throw new Error("Awareness summary visible total does not match records length");
+    }
+
+    if (byStatus !== records.length || byRole !== records.length || byShip !== records.length) {
+      throw new Error("Awareness summary aggregates do not match filtered dataset");
+    }
+
+    for (const record of summary.topActionableRecords) {
+      if (record.bucket !== "PENDING_MY_ACTION") {
+        throw new Error(`Top actionable awareness record is not actionable: ${record.recordId}`);
+      }
+      if (!record.visibleTo.includes(actor.role)) {
+        throw new Error(`Top actionable awareness record leaked visibility: ${record.recordId}`);
+      }
+      if (this.requiresShipScopedVisibility(actor.role) && record.shipId !== actor.shipId) {
+        throw new Error(`Top actionable awareness record leaked ship scope: ${record.recordId}`);
+      }
+    }
+  }
+
+  private assertPositiveNumber(value: number, fieldName: string): void {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`${fieldName} must be a positive number`);
+    }
+  }
+
+  private assertPositiveInteger(value: number, fieldName: string): void {
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`${fieldName} must be a positive integer`);
     }
   }
 
