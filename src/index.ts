@@ -106,6 +106,7 @@ if (require.main === module) {
   const app = createDailyLogEngineApp();
   const health = app.getHealthCheck();
   const server = startHttpServer({
+    engine: app.engine,
     eventBus: app.eventBus,
     store: app.store,
     getHealthCheck: app.getHealthCheck,
