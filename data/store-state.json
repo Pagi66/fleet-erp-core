@@ -988,7 +988,20 @@
       }
     ]
   ],
-  "escalationState": [],
+  "escalationState": [
+    [
+      "SHIP-A:2026-03-25",
+      {
+        "shipId": "SHIP-A",
+        "businessDate": "2026-03-25",
+        "status": "NOT_ESCALATED",
+        "reason": null,
+        "missingLogsAtEscalation": [],
+        "escalatedAt": null,
+        "targetRole": null
+      }
+    ]
+  ],
   "notifications": [
     {
       "type": "APPROVAL_PENDING",

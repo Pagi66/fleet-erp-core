@@ -1,6 +1,7 @@
 import { AuditApprovalInvalidAttemptAction } from "./actions/audit-approval-invalid-attempt.action";
 import { ApproveApprovalRecordAction } from "./actions/approve-approval-record.action";
 import { CreateApprovalRecordAction } from "./actions/create-approval-record.action";
+import { CreateDefectAction } from "./actions/create-defect.action";
 import { EscalateCoAction } from "./actions/escalate-co.action";
 import { CheckTaskAction } from "./actions/check-task.action";
 import { CompleteTaskAction } from "./actions/complete-task.action";
@@ -36,6 +37,7 @@ export function createDailyLogEngineApp() {
   const eventBus = new EventBus();
   const auditApprovalInvalidAttemptAction = new AuditApprovalInvalidAttemptAction();
   const createApprovalRecordAction = new CreateApprovalRecordAction();
+  const createDefectAction = new CreateDefectAction();
   const submitApprovalRecordAction = new SubmitApprovalRecordAction();
   const approveApprovalRecordAction = new ApproveApprovalRecordAction();
   const rejectApprovalRecordAction = new RejectApprovalRecordAction();
@@ -61,6 +63,7 @@ export function createDailyLogEngineApp() {
     pmsTaskRule,
     defectRule,
     createApprovalRecordAction,
+    createDefectAction,
     submitApprovalRecordAction,
     approveApprovalRecordAction,
     rejectApprovalRecordAction,

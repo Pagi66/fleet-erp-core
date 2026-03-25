@@ -8,18 +8,43 @@ export class DefectRule {
         throw new Error("DEFECT_REPORTED event is missing task fields");
       }
 
+      const defectId = event.taskId;
+      const existingDefect = store.getDefect(defectId);
       const existingTask = store.getTaskInShip(event.taskId, event.shipId);
-      if (existingTask) {
+      if (existingTask && existingDefect) {
         return this.createDecision(event, "NO_CHANGE", []);
       }
 
-      const commands: ActionCommand[] = [
-        {
+      const commands: ActionCommand[] = [];
+
+      if (!existingDefect) {
+        commands.push({
+          type: "CREATE_DEFECT",
+          businessDate: event.businessDate,
+          issuedAt: event.occurredAt,
+          missingLogs: [],
+          shipId: event.shipId,
+          defectId,
+          iss: event.iss ?? "0000",
+          equipment: event.equipment ?? event.taskTitle,
+          taskTitle: event.taskTitle,
+          defectDescription: event.description ?? event.taskTitle,
+          defectClassification: event.severity === "CRITICAL" ? "IMMEDIATE" : "UNSCHEDULED",
+          operationalImpact: event.description ?? "Operational impact assessment pending",
+          reportedBy: event.actor ?? "SYSTEM",
+          ...(typeof event.ettrDays === "number" ? { ettrDays: event.ettrDays } : {}),
+          ...(event.ettrDays && event.ettrDays > 21 ? { repairLevel: "DLM" as const } : {}),
+        });
+      }
+
+      if (!existingTask) {
+        commands.push({
           type: "CREATE_DEFECT_TASK",
           businessDate: event.businessDate,
           issuedAt: event.occurredAt,
           missingLogs: [],
           shipId: event.shipId,
+          defectId,
           taskId: event.taskId,
           taskTitle: event.taskTitle,
           taskKind: "DEFECT",
@@ -28,8 +53,8 @@ export class DefectRule {
           ...(typeof event.severity !== "undefined"
             ? { severity: event.severity }
             : {}),
-        },
-      ];
+        });
+      }
 
       if (event.severity === "CRITICAL") {
         commands.push({

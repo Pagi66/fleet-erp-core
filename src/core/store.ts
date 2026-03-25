@@ -8,7 +8,14 @@ import {
   writeFileSync,
 } from "fs";
 import { dirname, resolve } from "path";
+import type { ComplianceSignal } from "./compliance-engine";
 import { config } from "./config";
+import {
+  cleanupOldEvents,
+  isDuplicateEvent,
+  markEventProcessed as registerProcessedEvent,
+  type EventIntegrityState,
+} from "./event-integrity";
 import { logger } from "./logger";
 import {
   ActorContext,
@@ -23,6 +30,8 @@ import {
   AttentionSignal,
   AwarenessBucket,
   DailyComplianceState,
+  Defect,
+  Equipment,
   EscalationState,
   FleetRecord,
   FleetRecordKind,
@@ -41,7 +50,7 @@ import {
   TaskStateSnapshot,
 } from "./types";
 
-const STORE_STATE_VERSION = 8;
+const STORE_STATE_VERSION = 12;
 const DEFAULT_AWARENESS_STALE_THRESHOLD_HOURS = 24;
 const DEFAULT_AWARENESS_PENDING_THRESHOLD_HOURS = 48;
 const DEFAULT_AWARENESS_REJECTED_WINDOW_HOURS = 72;
@@ -62,16 +71,27 @@ interface ProcessedApprovalTransition {
   actionType: ApprovalHistoryType;
 }
 
+export interface FailedEventRecord {
+  eventId: string;
+  reason: string;
+  timestamp: number;
+}
+
 interface PersistedStoreState {
   version: number;
   ships: Ship[];
+  equipment: Equipment[];
   tasks: Task[];
+  defects: Defect[];
   taskHistory: Array<[string, TaskHistoryEntry[]]>;
   records: FleetRecord[];
   approvalHistory: Array<[string, ApprovalHistoryEntry[]]>;
   processedTransitions: Array<[string, ProcessedApprovalTransition]>;
+  processedEvents: Record<string, number>;
+  failedEvents: Record<string, { reason: string; timestamp: number }>;
   escalationState: Array<[string, EscalationState]>;
   notifications: Notification[];
+  complianceSignals: ComplianceSignal[];
 }
 
 export interface StoreHealthCheck {
@@ -98,6 +118,8 @@ export interface StoreHealthCheck {
 export class InMemoryStore {
   private readonly shipsById = new Map<string, Ship>();
 
+  private readonly equipmentByIss = new Map<string, Equipment>();
+
   private readonly logsByDate = new Map<string, LogRecord[]>();
 
   private readonly complianceByDate = new Map<string, DailyComplianceState>();
@@ -105,6 +127,8 @@ export class InMemoryStore {
   private readonly escalationByDate = new Map<string, EscalationState>();
 
   private readonly tasksById = new Map<string, Task>();
+
+  private readonly defectsById = new Map<string, Defect>();
 
   private readonly taskHistoryById = new Map<string, TaskHistoryEntry[]>();
 
@@ -114,7 +138,13 @@ export class InMemoryStore {
 
   private readonly processedTransitions = new Map<string, ProcessedApprovalTransition>();
 
+  private readonly processedEventsById = new Map<string, number>();
+
+  private readonly failedEventsById = new Map<string, { reason: string; timestamp: number }>();
+
   private readonly notificationsById = new Map<string, Notification>();
+
+  private readonly complianceSignalsByKey = new Map<string, ComplianceSignal>();
 
   private readonly persistenceFilePath: string;
 
@@ -145,6 +175,21 @@ export class InMemoryStore {
       eventType: "LOG_RECORDED",
       status: "UPDATED",
     });
+  }
+
+  saveEquipment(equipment: Equipment): Equipment {
+    this.assertValidEquipment(equipment);
+    this.equipmentByIss.set(equipment.iss, equipment);
+    this.persistState();
+    return equipment;
+  }
+
+  getEquipment(iss: string): Equipment | null {
+    return this.equipmentByIss.get(iss) ?? null;
+  }
+
+  getAllEquipment(): Equipment[] {
+    return [...this.equipmentByIss.values()];
   }
 
   getLogsForDate(shipId: string, businessDate: string): LogRecord[] {
@@ -250,6 +295,15 @@ export class InMemoryStore {
     this.assertShipExists(task.shipId);
     this.assertValidAssignedRole(task.assignedRole, "assignedRole");
     this.assertValidRole(actor, "actor");
+    this.assertTaskEquipmentLinkage(task);
+    if (task.kind === "DEFECT") {
+      if (!task.defectId) {
+        throw new Error(`Defect task ${task.id} requires defectId`);
+      }
+      if (!this.defectsById.has(task.defectId)) {
+        throw new Error(`Defect task ${task.id} references unknown defect: ${task.defectId}`);
+      }
+    }
     const existing = this.getTask(task.id);
     if (existing) {
       if (existing.shipId !== task.shipId) {
@@ -282,6 +336,73 @@ export class InMemoryStore {
     return task;
   }
 
+  createDefect(defect: Defect): Defect {
+    this.assertValidDefect(defect);
+    this.assertShipExists(defect.shipId);
+    const existing = this.defectsById.get(defect.id);
+    if (existing) {
+      return existing;
+    }
+
+    this.defectsById.set(defect.id, defect);
+    this.persistState();
+    return defect;
+  }
+
+  getDefect(defectId: string): Defect | null {
+    return this.defectsById.get(defectId) ?? null;
+  }
+
+  getAllDefects(): Defect[] {
+    return [...this.defectsById.values()];
+  }
+
+  getTasksByDefectId(defectId: string): Task[] {
+    return this.getAllTasks().filter((task) => task.defectId === defectId);
+  }
+
+  getFailedEvents(): FailedEventRecord[] {
+    return [...this.failedEventsById.entries()]
+      .map(([eventId, failure]) => ({
+        eventId,
+        reason: failure.reason,
+        timestamp: failure.timestamp,
+      }))
+      .sort((left, right) =>
+        left.eventId.localeCompare(right.eventId) ||
+        left.timestamp - right.timestamp ||
+        left.reason.localeCompare(right.reason),
+      );
+  }
+
+  getFailedEventById(eventId: string): FailedEventRecord | null {
+    const failure = this.failedEventsById.get(eventId);
+    if (!failure) {
+      return null;
+    }
+
+    return {
+      eventId,
+      reason: failure.reason,
+      timestamp: failure.timestamp,
+    };
+  }
+
+  updateDefectStatus(defectId: string, status: Defect["status"]): Defect {
+    const current = this.getDefect(defectId);
+    if (!current) {
+      throw new Error(`Defect not found: ${defectId}`);
+    }
+
+    const next: Defect = {
+      ...current,
+      status,
+    };
+    this.defectsById.set(defectId, next);
+    this.persistState();
+    return next;
+  }
+
   getTask(taskId: string): Task | null {
     return this.tasksById.get(taskId) ?? null;
   }
@@ -303,12 +424,20 @@ export class InMemoryStore {
     }
 
     this.assertTaskStatusTransition(current.status, "COMPLETED");
+    const completedAtMs = Date.parse(occurredAt);
+    const nextDueAt = this.deriveNextDueAt(current, completedAtMs);
     return this.applyTaskUpdate(
       taskId,
       {
         status: "COMPLETED",
+        executionStatus: "COMPLETED",
         completedAt: occurredAt,
+        verificationBy: actor,
+        verificationAt: completedAtMs,
         lastCheckedAt: occurredAt,
+        lastCompletedAt: completedAtMs,
+        requiresReplan: false,
+        ...(typeof nextDueAt === "number" ? { nextDueAt } : {}),
       },
       "COMPLETED",
       occurredAt,
@@ -395,6 +524,9 @@ export class InMemoryStore {
         parentTaskId: current.parentTaskId ?? current.id,
         replannedFromDueDate: current.dueDate,
         replannedToDueDate: nextDueDate,
+        executionStatus: current.executionStatus === "COMPLETED" ? "COMPLETED" : "MISSED",
+        nextDueAt: this.computeMinimalNextDueAt(current, occurredAt, nextDueDate),
+        requiresReplan: true,
       },
       "REPLANNED",
       occurredAt,
@@ -495,6 +627,47 @@ export class InMemoryStore {
 
   getProcessedApprovalTransition(transitionId: string): ProcessedApprovalTransition | null {
     return this.processedTransitions.get(transitionId) ?? null;
+  }
+
+  isEventProcessed(eventId: string): boolean {
+    return isDuplicateEvent(eventId, this.getEventIntegrityState());
+  }
+
+  markEventProcessed(eventId: string, processedAt: number): void {
+    const nextState = registerProcessedEvent(
+      eventId,
+      this.getEventIntegrityState(),
+      processedAt,
+    );
+    this.replaceProcessedEvents(nextState.processedEvents);
+    this.failedEventsById.delete(eventId);
+    this.persistState();
+  }
+
+  recordFailedEvent(eventId: string, reason: string, timestamp: number): void {
+    this.failedEventsById.set(eventId, { reason, timestamp });
+    this.persistState();
+  }
+
+  clearFailedEvent(eventId: string): void {
+    if (this.failedEventsById.delete(eventId)) {
+      this.persistState();
+    }
+  }
+
+  cleanupFailedEvents(now: number, ttlMs: number): void {
+    for (const [eventId, failure] of this.failedEventsById.entries()) {
+      if (now - failure.timestamp > ttlMs) {
+        this.failedEventsById.delete(eventId);
+      }
+    }
+    this.persistState();
+  }
+
+  cleanupProcessedEvents(now: number, ttlMs: number): void {
+    const nextState = cleanupOldEvents(this.getEventIntegrityState(), now, ttlMs);
+    this.replaceProcessedEvents(nextState.processedEvents);
+    this.persistState();
   }
 
   getPreviousApprovalOwnerInShip(recordId: string, shipId: string): AssignedRoleId {
@@ -935,6 +1108,34 @@ export class InMemoryStore {
       (notification) =>
         notification.shipId === shipId && notification.targetRole === role,
     );
+  }
+
+  addComplianceSignals(signals: ComplianceSignal[]): void {
+    for (const signal of signals) {
+      this.assertValidComplianceSignal(signal);
+      this.complianceSignalsByKey.set(
+        this.buildComplianceSignalKey(signal),
+        signal,
+      );
+    }
+
+    this.persistState();
+  }
+
+  getComplianceSignalsByShip(shipId: string): ComplianceSignal[] {
+    this.assertValidShipId(shipId);
+    return this.getAllComplianceSignals().filter((signal) => signal.shipId === shipId);
+  }
+
+  getAllComplianceSignals(): ComplianceSignal[] {
+    return [...this.complianceSignalsByKey.values()].sort((left, right) =>
+      this.compareComplianceSignals(left, right),
+    );
+  }
+
+  clearComplianceSignals(): void {
+    this.complianceSignalsByKey.clear();
+    this.persistState();
   }
 
   markNotificationRead(notificationId: string): Notification {
@@ -1642,9 +1843,17 @@ export class InMemoryStore {
       shipId: task.shipId,
       parentTaskId: task.parentTaskId,
       kind: task.kind,
+      mic: task.mic,
+      iss: task.iss,
+      equipment: task.equipment,
+      cycleCode: task.cycleCode,
+      scheduleSource: task.scheduleSource,
       assignedRole: task.assignedRole,
       status: task.status,
+      executionStatus: task.executionStatus,
       completedAt: task.completedAt,
+      verificationBy: task.verificationBy,
+      verificationAt: task.verificationAt,
       lastCheckedAt: task.lastCheckedAt,
       lastOverdueAt: task.lastOverdueAt,
       replannedFromDueDate: task.replannedFromDueDate,
@@ -1652,9 +1861,29 @@ export class InMemoryStore {
       escalationLevel: task.escalationLevel,
       dueDate: task.dueDate,
       lastNotifiedAt: task.lastNotifiedAt,
+      ...(typeof task.lastCompletedAt === "number" ? { lastCompletedAt: task.lastCompletedAt } : {}),
+      ...(typeof task.nextDueAt === "number" ? { nextDueAt: task.nextDueAt } : {}),
+      ...(task.interval ? { interval: task.interval } : {}),
+      ...(task.calendarInterval ? { calendarInterval: task.calendarInterval } : {}),
+      ...(task.usageInterval ? { usageInterval: task.usageInterval } : {}),
+      ...(task.usageTracking ? { usageTracking: task.usageTracking } : {}),
+      ...(typeof task.requiresReplan !== "undefined" ? { requiresReplan: task.requiresReplan } : {}),
+      ...(typeof task.defectId !== "undefined" ? { defectId: task.defectId } : {}),
       ettrDays: task.ettrDays,
       severity: task.severity,
       escalatedAt: task.escalatedAt,
+      ...(typeof task.sectionVerifiedBy !== "undefined"
+        ? { sectionVerifiedBy: task.sectionVerifiedBy }
+        : {}),
+      ...(typeof task.sectionVerifiedAt !== "undefined"
+        ? { sectionVerifiedAt: task.sectionVerifiedAt }
+        : {}),
+      ...(typeof task.departmentVerifiedBy !== "undefined"
+        ? { departmentVerifiedBy: task.departmentVerifiedBy }
+        : {}),
+      ...(typeof task.departmentVerifiedAt !== "undefined"
+        ? { departmentVerifiedAt: task.departmentVerifiedAt }
+        : {}),
     };
   }
 
@@ -1690,9 +1919,17 @@ export class InMemoryStore {
       left.shipId === right.shipId &&
       left.parentTaskId === right.parentTaskId &&
       left.kind === right.kind &&
+      left.mic === right.mic &&
+      left.iss === right.iss &&
+      left.equipment === right.equipment &&
+      left.cycleCode === right.cycleCode &&
+      left.scheduleSource === right.scheduleSource &&
       left.assignedRole === right.assignedRole &&
       left.status === right.status &&
+      left.executionStatus === right.executionStatus &&
       left.completedAt === right.completedAt &&
+      left.verificationBy === right.verificationBy &&
+      left.verificationAt === right.verificationAt &&
       left.lastCheckedAt === right.lastCheckedAt &&
       left.lastOverdueAt === right.lastOverdueAt &&
       left.replannedFromDueDate === right.replannedFromDueDate &&
@@ -1700,9 +1937,21 @@ export class InMemoryStore {
       left.escalationLevel === right.escalationLevel &&
       left.dueDate === right.dueDate &&
       left.lastNotifiedAt === right.lastNotifiedAt &&
+      left.lastCompletedAt === right.lastCompletedAt &&
+      left.nextDueAt === right.nextDueAt &&
+      this.isSameInterval(left.interval, right.interval) &&
+      this.isSameInterval(left.calendarInterval, right.calendarInterval) &&
+      this.isSameInterval(left.usageInterval, right.usageInterval) &&
+      this.isSameUsageTracking(left.usageTracking, right.usageTracking) &&
+      left.requiresReplan === right.requiresReplan &&
+      left.defectId === right.defectId &&
       left.ettrDays === right.ettrDays &&
       left.severity === right.severity &&
-      left.escalatedAt === right.escalatedAt
+      left.escalatedAt === right.escalatedAt &&
+      left.sectionVerifiedBy === right.sectionVerifiedBy &&
+      left.sectionVerifiedAt === right.sectionVerifiedAt &&
+      left.departmentVerifiedBy === right.departmentVerifiedBy &&
+      left.departmentVerifiedAt === right.departmentVerifiedAt
     );
   }
 
@@ -1732,6 +1981,108 @@ export class InMemoryStore {
       left.lastStaleNotificationAt === right.lastStaleNotificationAt &&
       left.version === right.version
     );
+  }
+
+  private isSameInterval(left?: Task["interval"], right?: Task["interval"]): boolean {
+    if (!left && !right) {
+      return true;
+    }
+
+    if (!left || !right) {
+      return false;
+    }
+
+    return (
+      left.type === right.type &&
+      left.value === right.value &&
+      left.unit === right.unit
+    );
+  }
+
+  private isSameUsageTracking(
+    left?: Task["usageTracking"],
+    right?: Task["usageTracking"],
+  ): boolean {
+    if (!left && !right) {
+      return true;
+    }
+
+    if (!left || !right) {
+      return false;
+    }
+
+    return (
+      left.hoursRun === right.hoursRun &&
+      left.shotsFired === right.shotsFired
+    );
+  }
+
+  private deriveNextDueAt(task: Task, completedAt: number): number | undefined {
+    if (!Number.isFinite(completedAt)) {
+      return task.nextDueAt;
+    }
+
+    const triggerCandidates = [
+      this.deriveIntervalDueAt(task.interval, completedAt),
+      this.deriveIntervalDueAt(task.calendarInterval, completedAt),
+      typeof task.nextDueAt === "number" && Number.isFinite(task.nextDueAt)
+        ? task.nextDueAt
+        : undefined,
+    ].filter((candidate): candidate is number => typeof candidate === "number");
+
+    if (triggerCandidates.length === 0) {
+      return undefined;
+    }
+
+    return Math.min(...triggerCandidates);
+  }
+
+  private deriveIntervalDueAt(
+    interval: Task["interval"] | Task["calendarInterval"],
+    completedAt: number,
+  ): number | undefined {
+    if (!interval || interval.type !== "CALENDAR") {
+      return undefined;
+    }
+
+    return completedAt + this.convertIntervalToMs(interval);
+  }
+
+  private computeMinimalNextDueAt(
+    task: Task,
+    occurredAt: string,
+    nextDueDate: string,
+  ): number {
+    const occurredAtMs = Date.parse(occurredAt);
+    const fallbackDueAt = Date.parse(nextDueDate);
+    const minimalIntervalMs = this.getMinimalIntervalMs(task);
+    if (Number.isFinite(occurredAtMs) && Number.isFinite(minimalIntervalMs)) {
+      return occurredAtMs + minimalIntervalMs;
+    }
+
+    if (Number.isFinite(fallbackDueAt)) {
+      return fallbackDueAt;
+    }
+
+    return Date.now() + 24 * 60 * 60 * 1000;
+  }
+
+  private getMinimalIntervalMs(task: Task): number {
+    const intervals = [task.interval, task.calendarInterval, task.usageInterval]
+      .filter((interval): interval is NonNullable<Task["interval"]> => Boolean(interval))
+      .map((interval) => this.convertIntervalToMs(interval))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (intervals.length === 0) {
+      return 24 * 60 * 60 * 1000;
+    }
+
+    return Math.min(...intervals);
+  }
+
+  private convertIntervalToMs(interval: NonNullable<Task["interval"]>): number {
+    const unitMs = interval.unit === "HOURS" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    return interval.value * unitMs;
   }
 
   private applyApprovalTransition(
@@ -1924,6 +2275,28 @@ export class InMemoryStore {
     }
   }
 
+  private assertTaskEquipmentLinkage(task: Task): void {
+    if (typeof task.iss !== "string" || task.iss.trim() === "") {
+      throw new Error(`Task ${task.id} requires iss`);
+    }
+
+    if (typeof task.equipment !== "string" || task.equipment.trim() === "") {
+      throw new Error(`Task ${task.id} requires equipment`);
+    }
+  }
+
+  private assertValidEquipment(equipment: Equipment): void {
+    if (!this.isEquipment(equipment)) {
+      throw new Error("Invalid equipment");
+    }
+  }
+
+  private assertValidDefect(defect: Defect): void {
+    if (!this.isDefect(defect)) {
+      throw new Error("Invalid defect");
+    }
+  }
+
   private loadPersistedState(): void {
     const loaded =
       this.tryLoadFromPath(this.persistenceFilePath)
@@ -1942,13 +2315,27 @@ export class InMemoryStore {
       this.shipsById.set(ship.id, ship);
     }
 
+    this.equipmentByIss.clear();
+    for (const equipment of persisted.equipment) {
+      this.equipmentByIss.set(equipment.iss, equipment);
+    }
+
     for (const task of persisted.tasks) {
-      this.tasksById.set(task.id, task);
+      const hydratedTask = this.hydrateTask(task);
+      this.tasksById.set(hydratedTask.id, hydratedTask);
+    }
+
+    this.defectsById.clear();
+    for (const defect of persisted.defects) {
+      this.defectsById.set(defect.id, defect);
     }
 
     this.taskHistoryById.clear();
     for (const [taskId, history] of persisted.taskHistory) {
-      this.taskHistoryById.set(taskId, history);
+      this.taskHistoryById.set(
+        taskId,
+        history.map((entry) => this.hydrateTaskHistoryEntry(entry)),
+      );
     }
 
     this.recordsById.clear();
@@ -1966,6 +2353,16 @@ export class InMemoryStore {
       this.processedTransitions.set(transitionId, transition);
     }
 
+    this.processedEventsById.clear();
+    for (const [eventId, processedAt] of Object.entries(persisted.processedEvents)) {
+      this.processedEventsById.set(eventId, processedAt);
+    }
+
+    this.failedEventsById.clear();
+    for (const [eventId, failedEvent] of Object.entries(persisted.failedEvents)) {
+      this.failedEventsById.set(eventId, failedEvent);
+    }
+
     this.escalationByDate.clear();
     for (const [businessDate, escalationState] of persisted.escalationState) {
       this.escalationByDate.set(businessDate, escalationState);
@@ -1974,6 +2371,11 @@ export class InMemoryStore {
     this.notificationsById.clear();
     for (const notification of persisted.notifications) {
       this.notificationsById.set(notification.id, notification);
+    }
+
+    this.complianceSignalsByKey.clear();
+    for (const signal of persisted.complianceSignals) {
+      this.complianceSignalsByKey.set(this.buildComplianceSignalKey(signal), signal);
     }
 
     try {
@@ -1985,6 +2387,160 @@ export class InMemoryStore {
       });
       this.lastPersistenceTimestamp = null;
     }
+  }
+
+  private hydrateTask(task: Task): Task {
+    return {
+      ...task,
+      mic: task.mic ?? "UNSPECIFIED-MIC",
+      iss: task.iss ?? "0000",
+      equipment: task.equipment ?? task.title,
+      cycleCode: task.cycleCode ?? "D",
+      scheduleSource: task.scheduleSource ?? "CYCLE",
+      executionStatus: task.executionStatus ?? this.deriveExecutionStatus(task.status),
+      verificationBy: task.verificationBy ?? null,
+      verificationAt: task.verificationAt ?? null,
+      ...(typeof task.lastCompletedAt === "number" ? { lastCompletedAt: task.lastCompletedAt } : {}),
+      ...(() => {
+        const nextDueAt =
+          typeof task.nextDueAt === "number"
+            ? task.nextDueAt
+            : this.parseOptionalTimestamp(task.dueDate);
+        return typeof nextDueAt === "number" ? { nextDueAt } : {};
+      })(),
+      ...(task.interval ? { interval: task.interval } : {}),
+      ...(task.calendarInterval ? { calendarInterval: task.calendarInterval } : {}),
+      ...(task.usageInterval ? { usageInterval: task.usageInterval } : {}),
+      ...(task.usageTracking ? { usageTracking: task.usageTracking } : {}),
+      ...(typeof task.requiresReplan !== "undefined" ? { requiresReplan: task.requiresReplan } : {}),
+      ...(typeof task.defectId !== "undefined"
+        ? { defectId: task.defectId }
+        : task.kind === "DEFECT"
+          ? { defectId: task.id }
+          : {}),
+      ...(typeof task.sectionVerifiedBy !== "undefined"
+        ? { sectionVerifiedBy: task.sectionVerifiedBy }
+        : {}),
+      ...(typeof task.sectionVerifiedAt !== "undefined"
+        ? { sectionVerifiedAt: task.sectionVerifiedAt }
+        : {}),
+      ...(typeof task.departmentVerifiedBy !== "undefined"
+        ? { departmentVerifiedBy: task.departmentVerifiedBy }
+        : {}),
+      ...(typeof task.departmentVerifiedAt !== "undefined"
+        ? { departmentVerifiedAt: task.departmentVerifiedAt }
+        : {}),
+    };
+  }
+
+  private hydrateTaskHistoryEntry(entry: TaskHistoryEntry): TaskHistoryEntry {
+    return {
+      ...entry,
+      previousState: this.hydrateTaskStateSnapshot(entry.previousState),
+      newState: this.hydrateTaskStateSnapshot(entry.newState),
+    };
+  }
+
+  private hydrateTaskStateSnapshot(snapshot: TaskStateSnapshot): TaskStateSnapshot {
+    return {
+      ...snapshot,
+      mic: snapshot.mic ?? "UNSPECIFIED-MIC",
+      iss: snapshot.iss ?? "0000",
+      equipment: snapshot.equipment ?? "Unspecified Equipment",
+      cycleCode: snapshot.cycleCode ?? "D",
+      scheduleSource: snapshot.scheduleSource ?? "CYCLE",
+      executionStatus: snapshot.executionStatus ?? this.deriveExecutionStatus(snapshot.status),
+      verificationBy: snapshot.verificationBy ?? null,
+      verificationAt: snapshot.verificationAt ?? null,
+      ...(typeof snapshot.lastCompletedAt === "number"
+        ? { lastCompletedAt: snapshot.lastCompletedAt }
+        : {}),
+      ...(() => {
+        const nextDueAt =
+          typeof snapshot.nextDueAt === "number"
+            ? snapshot.nextDueAt
+            : this.parseOptionalTimestamp(snapshot.dueDate);
+        return typeof nextDueAt === "number" ? { nextDueAt } : {};
+      })(),
+      ...(snapshot.interval ? { interval: snapshot.interval } : {}),
+      ...(snapshot.calendarInterval ? { calendarInterval: snapshot.calendarInterval } : {}),
+      ...(snapshot.usageInterval ? { usageInterval: snapshot.usageInterval } : {}),
+      ...(snapshot.usageTracking ? { usageTracking: snapshot.usageTracking } : {}),
+      ...(typeof snapshot.requiresReplan !== "undefined" ? { requiresReplan: snapshot.requiresReplan } : {}),
+      ...(typeof snapshot.defectId !== "undefined" ? { defectId: snapshot.defectId } : {}),
+      ...(typeof snapshot.sectionVerifiedBy !== "undefined"
+        ? { sectionVerifiedBy: snapshot.sectionVerifiedBy }
+        : {}),
+      ...(typeof snapshot.sectionVerifiedAt !== "undefined"
+        ? { sectionVerifiedAt: snapshot.sectionVerifiedAt }
+        : {}),
+      ...(typeof snapshot.departmentVerifiedBy !== "undefined"
+        ? { departmentVerifiedBy: snapshot.departmentVerifiedBy }
+        : {}),
+      ...(typeof snapshot.departmentVerifiedAt !== "undefined"
+        ? { departmentVerifiedAt: snapshot.departmentVerifiedAt }
+        : {}),
+    };
+  }
+
+  private migrateTasks(value: unknown): Task[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item): item is Task => isRecord(item))
+      .map((task) => this.hydrateTask(task as Task));
+  }
+
+  private migrateTaskHistory(value: unknown): Array<[string, TaskHistoryEntry[]]> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((entry): entry is [string, TaskHistoryEntry[]] =>
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        typeof entry[0] === "string" &&
+        Array.isArray(entry[1]),
+      )
+      .map(([taskId, history]) => [
+        taskId,
+        history.map((entry) => this.hydrateTaskHistoryEntry(entry)),
+      ]);
+  }
+
+  private migrateEquipment(value: unknown): Equipment[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.filter((item): item is Equipment => this.isEquipment(item));
+  }
+
+  private migrateDefects(value: unknown, taskValue: unknown): Defect[] {
+    if (Array.isArray(value)) {
+      return value.filter((item): item is Defect => this.isDefect(item));
+    }
+
+    return [];
+  }
+
+  private deriveExecutionStatus(status: Task["status"]): Task["executionStatus"] {
+    switch (status) {
+      case "COMPLETED":
+        return "COMPLETED";
+      case "OVERDUE":
+        return "MISSED";
+      default:
+        return "PENDING";
+    }
+  }
+
+  private parseOptionalTimestamp(value: string): number | undefined {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
   }
 
   private tryLoadFromPath(path: string): { state: PersistedStoreState; path: string } | null {
@@ -2036,6 +2592,14 @@ export class InMemoryStore {
       return false;
     }
 
+    if (!Array.isArray(value.equipment) || !value.equipment.every((item) => this.isEquipment(item))) {
+      return false;
+    }
+
+    if (!Array.isArray(value.defects) || !value.defects.every((item) => this.isDefect(item))) {
+      return false;
+    }
+
     if (
       !Array.isArray(value.taskHistory) ||
       !value.taskHistory.every((entry) => this.isTaskHistoryTuple(entry))
@@ -2062,6 +2626,35 @@ export class InMemoryStore {
     }
 
     if (
+      !isRecord(value.processedEvents) ||
+      !Object.entries(value.processedEvents).every(
+        ([eventId, processedAt]) =>
+          typeof eventId === "string" &&
+          eventId.trim() !== "" &&
+          typeof processedAt === "number" &&
+          Number.isFinite(processedAt),
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !isRecord(value.failedEvents) ||
+      !Object.entries(value.failedEvents).every(
+        ([eventId, failedEvent]) =>
+          typeof eventId === "string" &&
+          eventId.trim() !== "" &&
+          isRecord(failedEvent) &&
+          typeof failedEvent.reason === "string" &&
+          failedEvent.reason.trim() !== "" &&
+          typeof failedEvent.timestamp === "number" &&
+          Number.isFinite(failedEvent.timestamp),
+      )
+    ) {
+      return false;
+    }
+
+    if (
       !Array.isArray(value.escalationState) ||
       !value.escalationState.every((entry) => this.isEscalationStateTuple(entry))
     ) {
@@ -2071,6 +2664,13 @@ export class InMemoryStore {
     if (
       !Array.isArray(value.notifications) ||
       !value.notifications.every((entry) => this.isNotification(entry))
+    ) {
+      return false;
+    }
+
+    if (
+      !Array.isArray(value.complianceSignals) ||
+      !value.complianceSignals.every((entry) => this.isComplianceSignal(entry))
     ) {
       return false;
     }
@@ -2089,6 +2689,57 @@ export class InMemoryStore {
     if (value.version === STORE_STATE_VERSION) {
       return value as unknown as PersistedStoreState;
     }
+
+    const baseState = {
+      version: STORE_STATE_VERSION,
+      ships: (value.ships as Ship[]) ?? [],
+      equipment: this.migrateEquipment(value.equipment),
+      tasks: this.migrateTasks(value.tasks),
+      defects: this.migrateDefects(value.defects, value.tasks),
+      taskHistory: this.migrateTaskHistory(value.taskHistory),
+      records: (value.records as FleetRecord[]) ?? [],
+      approvalHistory: (value.approvalHistory as Array<[string, ApprovalHistoryEntry[]]>) ?? [],
+      processedTransitions:
+        (value.processedTransitions as Array<[string, ProcessedApprovalTransition]>) ?? [],
+      escalationState: (value.escalationState as Array<[string, EscalationState]>) ?? [],
+      notifications: (value.notifications as Notification[]) ?? [],
+    };
+
+      if (value.version === 9) {
+        return {
+          ...baseState,
+          processedEvents: {},
+          failedEvents: {},
+          complianceSignals: (value.complianceSignals as ComplianceSignal[]) ?? [],
+        };
+      }
+
+      if (value.version === 10) {
+        return {
+          ...baseState,
+          processedEvents: (value.processedEvents as Record<string, number>) ?? {},
+          failedEvents: {},
+          complianceSignals: (value.complianceSignals as ComplianceSignal[]) ?? [],
+        };
+      }
+
+      if (value.version === 11) {
+        return {
+          ...baseState,
+          processedEvents: (value.processedEvents as Record<string, number>) ?? {},
+          failedEvents: {},
+          complianceSignals: (value.complianceSignals as ComplianceSignal[]) ?? [],
+        };
+      }
+
+      if (value.version === 8) {
+        return {
+          ...baseState,
+          processedEvents: {},
+          failedEvents: {},
+          complianceSignals: [],
+        };
+      }
 
     logger.warn("persisted_state_version_mismatch", {
       result: path,
@@ -2113,16 +2764,38 @@ export class InMemoryStore {
       isNullableString(value.parentTaskId) &&
       (value.kind === "PMS" || value.kind === "DEFECT") &&
       typeof value.title === "string" &&
+      typeof value.mic === "string" &&
+      typeof value.iss === "string" &&
+      value.iss.trim() !== "" &&
+      typeof value.equipment === "string" &&
+      typeof value.cycleCode === "string" &&
+      (value.scheduleSource === "MPP" ||
+        value.scheduleSource === "CYCLE" ||
+        value.scheduleSource === "QUARTERLY" ||
+        value.scheduleSource === "WEEKLY") &&
       typeof value.businessDate === "string" &&
       typeof value.dueDate === "string" &&
       this.isAssignedRoleId(value.assignedRole) &&
       (value.status === "PENDING" || value.status === "COMPLETED" || value.status === "OVERDUE") &&
+      (value.executionStatus === "PENDING" ||
+        value.executionStatus === "COMPLETED" ||
+        value.executionStatus === "MISSED") &&
       isNullableString(value.completedAt) &&
+      isNullableString(value.verificationBy) &&
+      isNullableNumber(value.verificationAt) &&
       isNullableString(value.lastCheckedAt) &&
       isNullableString(value.lastOverdueAt) &&
       isNullableString(value.replannedFromDueDate) &&
       isNullableString(value.replannedToDueDate) &&
       isNullableString(value.lastNotifiedAt) &&
+      isOptionalNumber(value.lastCompletedAt) &&
+      isOptionalNumber(value.nextDueAt) &&
+      isOptionalMaintenanceInterval(value.interval) &&
+        isOptionalMaintenanceInterval(value.calendarInterval) &&
+        isOptionalMaintenanceInterval(value.usageInterval) &&
+        isOptionalUsageTracking(value.usageTracking) &&
+      (typeof value.requiresReplan === "undefined" || typeof value.requiresReplan === "boolean") &&
+      isOptionalNullableString(value.defectId) &&
       (typeof value.ettrDays === "number" || value.ettrDays === null) &&
       (value.severity === "ROUTINE" ||
         value.severity === "URGENT" ||
@@ -2131,7 +2804,56 @@ export class InMemoryStore {
       (value.escalationLevel === "NONE" ||
         value.escalationLevel === "MCC" ||
         value.escalationLevel === "LOG_COMD") &&
-      isNullableString(value.escalatedAt)
+      isNullableString(value.escalatedAt) &&
+      isOptionalNullableString(value.sectionVerifiedBy) &&
+      isOptionalNullableNumber(value.sectionVerifiedAt) &&
+      isOptionalNullableString(value.departmentVerifiedBy) &&
+      isOptionalNullableNumber(value.departmentVerifiedAt)
+    );
+  }
+
+  private isEquipment(value: unknown): value is Equipment {
+    return (
+      isRecord(value) &&
+      typeof value.iss === "string" &&
+      value.iss.trim() !== "" &&
+      typeof value.name === "string" &&
+      value.name.trim() !== "" &&
+      typeof value.system === "string" &&
+      value.system.trim() !== "" &&
+      isOptionalString(value.manufacturer) &&
+      isOptionalString(value.serialNumber) &&
+      isOptionalString(value.location)
+    );
+  }
+
+  private isDefect(value: unknown): value is Defect {
+    return (
+      isRecord(value) &&
+      typeof value.id === "string" &&
+      value.id.trim() !== "" &&
+      typeof value.shipId === "string" &&
+      value.shipId.trim() !== "" &&
+      typeof value.iss === "string" &&
+      value.iss.trim() !== "" &&
+      typeof value.equipment === "string" &&
+      value.equipment.trim() !== "" &&
+      typeof value.description === "string" &&
+      value.description.trim() !== "" &&
+      (value.classification === "IMMEDIATE" ||
+        value.classification === "UNSCHEDULED" ||
+        value.classification === "DELAYED") &&
+      typeof value.operationalImpact === "string" &&
+      typeof value.reportedBy === "string" &&
+      (value.status === "OPEN" ||
+        value.status === "IN_PROGRESS" ||
+        value.status === "RESOLVED") &&
+      (typeof value.ettr === "undefined" ||
+        (typeof value.ettr === "number" && Number.isFinite(value.ettr))) &&
+      (typeof value.repairLevel === "undefined" ||
+        value.repairLevel === "OLM" ||
+        value.repairLevel === "ILM" ||
+        value.repairLevel === "DLM")
     );
   }
 
@@ -2237,13 +2959,27 @@ export class InMemoryStore {
       value.shipId.trim() !== "" &&
       isNullableString(value.parentTaskId) &&
       (value.kind === "PMS" || value.kind === "DEFECT") &&
+      typeof value.mic === "string" &&
+      typeof value.iss === "string" &&
+      value.iss.trim() !== "" &&
+      typeof value.equipment === "string" &&
+      typeof value.cycleCode === "string" &&
+      (value.scheduleSource === "MPP" ||
+        value.scheduleSource === "CYCLE" ||
+        value.scheduleSource === "QUARTERLY" ||
+        value.scheduleSource === "WEEKLY") &&
       (value.assignedRole === "COMMANDING_OFFICER" ||
         value.assignedRole === "MARINE_ENGINEERING_OFFICER" ||
         value.assignedRole === "WEAPON_ELECTRICAL_OFFICER" ||
         value.assignedRole === "FLEET_SUPPORT_GROUP" ||
         value.assignedRole === "LOGISTICS_COMMAND") &&
       (value.status === "PENDING" || value.status === "COMPLETED" || value.status === "OVERDUE") &&
+      (value.executionStatus === "PENDING" ||
+        value.executionStatus === "COMPLETED" ||
+        value.executionStatus === "MISSED") &&
       isNullableString(value.completedAt) &&
+      isNullableString(value.verificationBy) &&
+      isNullableNumber(value.verificationAt) &&
       isNullableString(value.lastCheckedAt) &&
       isNullableString(value.lastOverdueAt) &&
       isNullableString(value.replannedFromDueDate) &&
@@ -2253,12 +2989,24 @@ export class InMemoryStore {
         value.escalationLevel === "LOG_COMD") &&
       typeof value.dueDate === "string" &&
       isNullableString(value.lastNotifiedAt) &&
+      isOptionalNumber(value.lastCompletedAt) &&
+      isOptionalNumber(value.nextDueAt) &&
+      isOptionalMaintenanceInterval(value.interval) &&
+      isOptionalMaintenanceInterval(value.calendarInterval) &&
+      isOptionalMaintenanceInterval(value.usageInterval) &&
+      isOptionalUsageTracking(value.usageTracking) &&
+      (typeof value.requiresReplan === "undefined" || typeof value.requiresReplan === "boolean") &&
+      isOptionalNullableString(value.defectId) &&
       (typeof value.ettrDays === "number" || value.ettrDays === null) &&
       (value.severity === "ROUTINE" ||
         value.severity === "URGENT" ||
         value.severity === "CRITICAL" ||
         value.severity === null) &&
-      isNullableString(value.escalatedAt)
+      isNullableString(value.escalatedAt) &&
+      isOptionalNullableString(value.sectionVerifiedBy) &&
+      isOptionalNullableNumber(value.sectionVerifiedAt) &&
+      isOptionalNullableString(value.departmentVerifiedBy) &&
+      isOptionalNullableNumber(value.departmentVerifiedAt)
     );
   }
 
@@ -2339,6 +3087,25 @@ export class InMemoryStore {
       this.isRoleId(value.targetRole) &&
       typeof value.timestamp === "string" &&
       typeof value.read === "boolean"
+    );
+  }
+
+  private isComplianceSignal(value: unknown): value is ComplianceSignal {
+    return (
+      isRecord(value) &&
+      typeof value.type === "string" &&
+      value.type.trim() !== "" &&
+      (value.severity === "INFO" ||
+        value.severity === "WARNING" ||
+        value.severity === "CRITICAL") &&
+      typeof value.message === "string" &&
+      value.message.trim() !== "" &&
+      (typeof value.shipId === "undefined" ||
+        (typeof value.shipId === "string" && value.shipId.trim() !== "")) &&
+      (typeof value.taskId === "undefined" ||
+        (typeof value.taskId === "string" && value.taskId.trim() !== "")) &&
+      (typeof value.defectId === "undefined" ||
+        (typeof value.defectId === "string" && value.defectId.trim() !== ""))
     );
   }
 
@@ -2514,28 +3281,118 @@ export class InMemoryStore {
     throw new Error("Approval rejection could not determine a previous owner from history");
   }
 
+  private assertValidComplianceSignal(signal: ComplianceSignal): void {
+    if (!this.isComplianceSignal(signal)) {
+      throw new Error("Invalid compliance signal");
+    }
+
+    if (signal.shipId) {
+      this.assertValidShipId(signal.shipId);
+    }
+  }
+
+  private buildComplianceSignalKey(signal: ComplianceSignal): string {
+    return [
+      signal.type,
+      signal.shipId ?? "NO_SHIP",
+      signal.taskId ?? "NO_TASK",
+      signal.defectId ?? "NO_DEFECT",
+    ].join("::");
+  }
+
+  private compareComplianceSignals(
+    left: ComplianceSignal,
+    right: ComplianceSignal,
+  ): number {
+    return (
+      this.compareOptionalString(left.shipId, right.shipId) ||
+      this.compareComplianceSeverity(left.severity, right.severity) ||
+      left.type.localeCompare(right.type) ||
+      this.compareOptionalString(left.taskId, right.taskId) ||
+      this.compareOptionalString(left.defectId, right.defectId) ||
+      left.message.localeCompare(right.message)
+    );
+  }
+
+  private compareComplianceSeverity(
+    left: ComplianceSignal["severity"],
+    right: ComplianceSignal["severity"],
+  ): number {
+    return this.getComplianceSeverityRank(right) - this.getComplianceSeverityRank(left);
+  }
+
+  private getComplianceSeverityRank(
+    severity: ComplianceSignal["severity"],
+  ): number {
+    switch (severity) {
+      case "CRITICAL":
+        return 3;
+      case "WARNING":
+        return 2;
+      case "INFO":
+        return 1;
+      default:
+        return 0;
+    }
+  }
+
+  private compareOptionalString(left?: string, right?: string): number {
+    return (left ?? "").localeCompare(right ?? "");
+  }
+
+  private getEventIntegrityState(): EventIntegrityState {
+    return {
+      processedEvents: Object.fromEntries(this.processedEventsById.entries()),
+    };
+  }
+
+  private replaceProcessedEvents(processedEvents: Record<string, number>): void {
+    this.processedEventsById.clear();
+    for (const [eventId, processedAt] of Object.entries(processedEvents)) {
+      this.processedEventsById.set(eventId, processedAt);
+    }
+  }
+
   private resetPersistedState(): void {
     this.shipsById.clear();
+    this.equipmentByIss.clear();
     this.tasksById.clear();
+    this.defectsById.clear();
     this.taskHistoryById.clear();
     this.recordsById.clear();
     this.approvalHistoryById.clear();
     this.processedTransitions.clear();
+    this.processedEventsById.clear();
+    this.failedEventsById.clear();
     this.escalationByDate.clear();
     this.notificationsById.clear();
+    this.complianceSignalsByKey.clear();
   }
 
   private persistState(): void {
     const payload: PersistedStoreState = {
       version: STORE_STATE_VERSION,
       ships: [...this.shipsById.values()],
+      equipment: [...this.equipmentByIss.values()],
       tasks: [...this.tasksById.values()],
+      defects: [...this.defectsById.values()],
       taskHistory: [...this.taskHistoryById.entries()],
       records: [...this.recordsById.values()],
       approvalHistory: [...this.approvalHistoryById.entries()],
       processedTransitions: [...this.processedTransitions.entries()],
-      escalationState: [...this.escalationByDate.entries()],
+        processedEvents: Object.fromEntries(
+          [...this.processedEventsById.entries()].sort(([leftId], [rightId]) =>
+            leftId.localeCompare(rightId),
+          ),
+        ),
+        failedEvents: Object.fromEntries(
+          [...this.failedEventsById.entries()].sort(([leftId], [rightId]) =>
+            leftId.localeCompare(rightId),
+          ),
+        ),
+        escalationState: [...this.escalationByDate.entries()],
       notifications: [...this.notificationsById.values()],
+      complianceSignals: this.getAllComplianceSignals(),
     };
 
     const serialized = JSON.stringify(payload, null, 2);
@@ -2573,4 +3430,47 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNullableString(value: unknown): value is string | null {
   return typeof value === "string" || value === null;
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return typeof value === "undefined" || typeof value === "string";
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return (typeof value === "number" && Number.isFinite(value)) || value === null;
+}
+
+function isOptionalNullableNumber(value: unknown): value is number | null | undefined {
+  return typeof value === "undefined" || isNullableNumber(value);
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return typeof value === "undefined" || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isOptionalNullableString(value: unknown): value is string | null | undefined {
+  return typeof value === "undefined" || typeof value === "string" || value === null;
+}
+
+function isOptionalMaintenanceInterval(
+  value: unknown,
+): value is Task["interval"] {
+  return (
+    typeof value === "undefined" ||
+    (isRecord(value) &&
+      (value.type === "CALENDAR" || value.type === "USAGE") &&
+      typeof value.value === "number" &&
+      Number.isFinite(value.value) &&
+      value.value > 0 &&
+      (value.unit === "DAYS" || value.unit === "HOURS"))
+  );
+}
+
+function isOptionalUsageTracking(value: unknown): value is Task["usageTracking"] {
+  return (
+    typeof value === "undefined" ||
+    (isRecord(value) &&
+      isOptionalNumber(value.hoursRun) &&
+      isOptionalNumber(value.shotsFired))
+  );
 }

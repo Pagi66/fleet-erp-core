@@ -1,0 +1,1 @@
+{"version":3,"file":"mark-compliance.action.d.ts","sourceRoot":"","sources":["mark-compliance.action.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,aAAa,EAAE,MAAM,eAAe,CAAC;AAC9C,OAAO,EAAE,aAAa,EAAuB,MAAM,eAAe,CAAC;AAInE,qBAAa,oBAAoB;IAC/B,OAAO,CAAC,OAAO,EAAE,aAAa,EAAE,KAAK,EAAE,aAAa,GAAG,IAAI;CA4C5D"}

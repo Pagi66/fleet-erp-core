@@ -1,0 +1,1 @@
+{"version":3,"file":"escalate-defect-to-mcc.action.d.ts","sourceRoot":"","sources":["escalate-defect-to-mcc.action.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,aAAa,EAAE,MAAM,eAAe,CAAC;AAC9C,OAAO,EAAE,aAAa,EAAE,MAAM,eAAe,CAAC;AAI9C,qBAAa,yBAAyB;IACpC,OAAO,CAAC,OAAO,EAAE,aAAa,EAAE,KAAK,EAAE,aAAa,GAAG,IAAI;CAuC5D"}

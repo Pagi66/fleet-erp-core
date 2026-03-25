@@ -151,16 +151,53 @@
         "currentStepIndex": 3,
         "approvalLevel": 3,
         "currentOwner": "LOGISTICS_COMMAND",
-        "status": "SUBMITTED",
+        "status": "APPROVED",
         "submittedAt": "2026-03-22T08:30:00.000Z",
-        "approvedAt": null,
+        "approvedAt": "2026-03-22T10:00:00.000Z",
         "rejectedAt": null,
-        "lastActionBy": "FLEET_SUPPORT_GROUP",
-        "lastActionAt": "2026-03-22T09:30:00.000Z",
+        "lastActionBy": "LOGISTICS_COMMAND",
+        "lastActionAt": "2026-03-22T10:00:00.000Z",
         "lastActionReason": null,
         "lastActionNote": null,
         "lastStaleNotificationAt": null,
-        "version": 4
+        "version": 5
+      }
+    },
+    {
+      "id": "ERR-SHIP-A-2026-03-25",
+      "shipId": "SHIP-A",
+      "kind": "MAINTENANCE_LOG",
+      "title": "Engine Room Register - Main Engine",
+      "description": "{\n  \"equipment\": \"Main Engine\",\n  \"operatingHours\": 12,\n  \"status\": \"RUNNING\",\n  \"remarks\": \"Normal watch\"\n}",
+      "businessDate": "2026-03-25",
+      "createdAt": "2026-03-25T17:05:48.152Z",
+      "originRole": "MARINE_ENGINEERING_OFFICER",
+      "visibleTo": [
+        "MARINE_ENGINEERING_OFFICER",
+        "COMMANDING_OFFICER",
+        "FLEET_SUPPORT_GROUP",
+        "LOGISTICS_COMMAND"
+      ],
+      "approval": {
+        "chain": [
+          "MARINE_ENGINEERING_OFFICER",
+          "COMMANDING_OFFICER",
+          "FLEET_SUPPORT_GROUP",
+          "LOGISTICS_COMMAND"
+        ],
+        "currentStepIndex": 0,
+        "approvalLevel": 0,
+        "currentOwner": "MARINE_ENGINEERING_OFFICER",
+        "status": "DRAFT",
+        "submittedAt": null,
+        "approvedAt": null,
+        "rejectedAt": null,
+        "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+        "lastActionAt": "2026-03-25T17:05:48.152Z",
+        "lastActionReason": null,
+        "lastActionNote": null,
+        "lastStaleNotificationAt": null,
+        "version": 1
       }
     }
   ],
@@ -864,6 +901,135 @@
           "transitionId": "CLI-004-approve-fsg",
           "reason": null,
           "note": null
+        },
+        {
+          "recordId": "CLI-004",
+          "shipId": "SHIP-B",
+          "timestamp": "2026-03-22T10:00:00.000Z",
+          "actionType": "APPROVED",
+          "previousState": {
+            "shipId": "SHIP-B",
+            "kind": "MAINTENANCE_LOG",
+            "title": "Routine maintenance log",
+            "businessDate": "2026-03-20",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 3,
+            "approvalLevel": 3,
+            "currentOwner": "LOGISTICS_COMMAND",
+            "status": "SUBMITTED",
+            "submittedAt": "2026-03-22T08:30:00.000Z",
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "FLEET_SUPPORT_GROUP",
+            "lastActionAt": "2026-03-22T09:30:00.000Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": null,
+            "version": 4
+          },
+          "newState": {
+            "shipId": "SHIP-B",
+            "kind": "MAINTENANCE_LOG",
+            "title": "Routine maintenance log",
+            "businessDate": "2026-03-20",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 3,
+            "approvalLevel": 3,
+            "currentOwner": "LOGISTICS_COMMAND",
+            "status": "APPROVED",
+            "submittedAt": "2026-03-22T08:30:00.000Z",
+            "approvedAt": "2026-03-22T10:00:00.000Z",
+            "rejectedAt": null,
+            "lastActionBy": "LOGISTICS_COMMAND",
+            "lastActionAt": "2026-03-22T10:00:00.000Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": null,
+            "version": 5
+          },
+          "actor": "LOGISTICS_COMMAND",
+          "transitionId": "CLI-004-approve-log",
+          "reason": null,
+          "note": null
+        }
+      ]
+    ],
+    [
+      "ERR-SHIP-A-2026-03-25",
+      [
+        {
+          "recordId": "ERR-SHIP-A-2026-03-25",
+          "shipId": "SHIP-A",
+          "timestamp": "2026-03-25T17:05:48.152Z",
+          "actionType": "CREATED",
+          "previousState": {
+            "shipId": "SHIP-A",
+            "kind": "MAINTENANCE_LOG",
+            "title": "Engine Room Register - Main Engine",
+            "businessDate": "2026-03-25",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 0,
+            "approvalLevel": 0,
+            "currentOwner": "MARINE_ENGINEERING_OFFICER",
+            "status": "DRAFT",
+            "submittedAt": null,
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+            "lastActionAt": "2026-03-25T17:05:48.152Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": null,
+            "version": 1
+          },
+          "newState": {
+            "shipId": "SHIP-A",
+            "kind": "MAINTENANCE_LOG",
+            "title": "Engine Room Register - Main Engine",
+            "businessDate": "2026-03-25",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 0,
+            "approvalLevel": 0,
+            "currentOwner": "MARINE_ENGINEERING_OFFICER",
+            "status": "DRAFT",
+            "submittedAt": null,
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+            "lastActionAt": "2026-03-25T17:05:48.152Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": null,
+            "version": 1
+          },
+          "actor": "MARINE_ENGINEERING_OFFICER",
+          "transitionId": null,
+          "reason": null,
+          "note": null
         }
       ]
     ]
@@ -917,9 +1083,29 @@
         "recordId": "CLI-004",
         "actionType": "APPROVED"
       }
+    ],
+    [
+      "CLI-004-approve-log",
+      {
+        "recordId": "CLI-004",
+        "actionType": "APPROVED"
+      }
     ]
   ],
-  "escalationState": [],
+  "escalationState": [
+    [
+      "SHIP-A:2026-03-25",
+      {
+        "shipId": "SHIP-A",
+        "businessDate": "2026-03-25",
+        "status": "NOT_ESCALATED",
+        "reason": null,
+        "missingLogsAtEscalation": [],
+        "escalatedAt": null,
+        "targetRole": null
+      }
+    ]
+  ],
   "notifications": [
     {
       "type": "APPROVAL_PENDING",
@@ -1039,6 +1225,18 @@
       "timestamp": "2026-03-22T09:30:00.000Z",
       "id": "notification_1774378905919_giltwo",
       "dedupeKey": "SHIP-B|APPROVAL_PENDING|NO_TASK|CLI-004|LOGISTICS_COMMAND",
+      "read": false
+    },
+    {
+      "type": "APPROVAL_PENDING",
+      "shipId": "SHIP-A",
+      "taskId": null,
+      "recordId": "ERR-SHIP-A-2026-03-25",
+      "message": "Approval action pending for MARINE_ENGINEERING_OFFICER: Engine Room Register - Main Engine",
+      "targetRole": "MARINE_ENGINEERING_OFFICER",
+      "timestamp": "2026-03-25T17:05:48.152Z",
+      "id": "notification_1774458348179_fdrf0x",
+      "dedupeKey": "SHIP-A|APPROVAL_PENDING|NO_TASK|ERR-SHIP-A-2026-03-25|MARINE_ENGINEERING_OFFICER",
       "read": false
     }
   ]

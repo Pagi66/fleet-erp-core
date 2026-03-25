@@ -1,0 +1,1 @@
+{"version":3,"file":"create-approval-record.action.d.ts","sourceRoot":"","sources":["create-approval-record.action.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,aAAa,EAAE,MAAM,eAAe,CAAC;AAC9C,OAAO,EAAE,aAAa,EAA+B,MAAM,eAAe,CAAC;AAgC3E,qBAAa,0BAA0B;IACrC,OAAO,CAAC,OAAO,EAAE,aAAa,EAAE,KAAK,EAAE,aAAa,GAAG,IAAI;CAmD5D"}

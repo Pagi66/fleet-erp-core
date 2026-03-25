@@ -1,0 +1,5 @@
+import { EngineEvent, FleetRecordKind, RoleId } from "../core/types";
+export declare function createApprovalRecordCreateEvent(shipId: string, recordId: string, recordKind: FleetRecordKind, recordTitle: string, businessDate: string, occurredAt: string, actor: RoleId, description?: string): EngineEvent;
+export declare function createApprovalTransitionEvent(type: "APPROVAL_RECORD_SUBMIT" | "APPROVAL_RECORD_APPROVE" | "APPROVAL_RECORD_REJECT", shipId: string, recordId: string, businessDate: string, occurredAt: string, actor: RoleId, transitionId?: string, reason?: string, note?: string): EngineEvent;
+export declare function createApprovalStaleCheckEvent(shipId: string, businessDate: string, occurredAt: string, staleThresholdHours: number): EngineEvent;
+//# sourceMappingURL=approval-events.d.ts.map
