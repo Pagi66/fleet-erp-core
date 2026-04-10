@@ -121,6 +121,7 @@ export interface Ship {
   id: string;
   name: string;
   classType: string;
+  jurisdictions: AssignedRoleId[];
 }
 
 export interface Equipment {

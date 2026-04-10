@@ -47,9 +47,9 @@ export interface SeedRecordOptions {
 }
 
 export const SCENARIO_SHIPS: Ship[] = [
-  { id: "NNS-ALPHA", name: "NNS Alpha", classType: "Frigate" },
-  { id: "NNS-BRAVO", name: "NNS Bravo", classType: "Corvette" },
-  { id: "NNS-CHARLIE", name: "NNS Charlie", classType: "Patrol" },
+  { id: "NNS-ALPHA", name: "NNS Alpha", classType: "Frigate", jurisdictions: ["FLEET_SUPPORT_GROUP"] },
+  { id: "NNS-BRAVO", name: "NNS Bravo", classType: "Corvette", jurisdictions: ["FLEET_SUPPORT_GROUP"] },
+  { id: "NNS-CHARLIE", name: "NNS Charlie", classType: "Patrol", jurisdictions: ["FLEET_SUPPORT_GROUP"] },
 ];
 
 export async function withScenarioApp(

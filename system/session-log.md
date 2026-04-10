@@ -173,3 +173,10 @@
 - Action performed: Removed `COMMANDING_OFFICER` from approval chains for `MARINE_ENGINEERING_OFFICER` and `WEAPON_ELECTRICAL_OFFICER` origins, updated test scenarios to expect `FLEET_SUPPORT_GROUP` as the first approver after submit, adjusted rejection and invalid action tests accordingly, and added `COMMANDING_OFFICER` back to RBAC for record creation to maintain test compatibility during transition.
 - Files modified: `src/actions/create-approval-record.action.ts`, `src/core/rbac.ts`, `tests/scenarios/approval-flow.scenario.ts`, `tests/scenarios/rejection-flow.scenario.ts`, `system/handoff.md`, `system/session-log.md`
 - Result: complete
+
+### 2026-04-10T22:00:00+01:00
+- Task name: Implement Iteration C - add explicit ship-to-FSG jurisdiction support and enforce it in retrieval and awareness
+- Selected context files: `context/index.md`, `system/target-architecture.md`, `system/implementation-plan.md`
+- Action performed: Added `jurisdictions` array to `Ship` interface to model oversight relationships, updated ship initialization in scenarios to include FSG jurisdiction for all ships, enforced jurisdiction checks in record visibility logic for FSG role, updated store validation and persistence version, and ensured awareness and retrieval methods respect jurisdiction boundaries.
+- Files modified: `src/core/types.ts`, `src/core/store.ts`, `tests/scenarios/helpers.ts`, `system/handoff.md`, `system/session-log.md`
+- Result: complete

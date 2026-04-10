@@ -50,7 +50,7 @@ import {
   TaskStateSnapshot,
 } from "./types";
 
-const STORE_STATE_VERSION = 13;
+const STORE_STATE_VERSION = 14;
 const DEFAULT_AWARENESS_STALE_THRESHOLD_HOURS = 24;
 const DEFAULT_AWARENESS_PENDING_THRESHOLD_HOURS = 48;
 const DEFAULT_AWARENESS_REJECTED_WINDOW_HOURS = 72;
@@ -1278,6 +1278,10 @@ export class InMemoryStore {
     );
   }
 
+  private requiresJurisdictionCheck(role: AssignedRoleId): boolean {
+    return role === "FLEET_SUPPORT_GROUP";
+  }
+
   private resolveActorScopedShipId(
     actor: Required<Pick<ActorContext, "role">> & Pick<ActorContext, "shipId">,
     options: NormalizedAwarenessOptions,
@@ -1306,6 +1310,13 @@ export class InMemoryStore {
       return records.filter((record) => record.shipId === actor.shipId);
     }
 
+    if (this.requiresJurisdictionCheck(actor.role)) {
+      return records.filter((record) => {
+        const ship = this.getShip(record.shipId);
+        return ship && ship.jurisdictions.includes(actor.role);
+      });
+    }
+
     return scopedShipId ? records.filter((record) => record.shipId === scopedShipId) : records;
   }
 
@@ -1319,6 +1330,11 @@ export class InMemoryStore {
 
     if (this.requiresShipScopedVisibility(actor.role)) {
       return record.shipId === actor.shipId;
+    }
+
+    if (this.requiresJurisdictionCheck(actor.role)) {
+      const ship = this.getShip(record.shipId);
+      return ship ? ship.jurisdictions.includes(actor.role) : false;
     }
 
     if (actor.shipId) {
@@ -3072,7 +3088,9 @@ export class InMemoryStore {
       typeof value.name === "string" &&
       value.name.trim() !== "" &&
       typeof value.classType === "string" &&
-      value.classType.trim() !== ""
+      value.classType.trim() !== "" &&
+      Array.isArray(value.jurisdictions) &&
+      value.jurisdictions.every((item) => typeof item === "string")
     );
   }
 

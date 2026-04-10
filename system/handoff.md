@@ -86,9 +86,9 @@
 
 ### Start Here Next Session
 
-Implement `Iteration C` from `system/implementation-plan.md`.
+Implement `Iteration D` from `system/implementation-plan.md`.
 
-`Iteration B` is now complete. Approval chains for MEO and WEO now go directly to FSG, removing CO from the flow.
+`Iteration C` is now complete. Explicit ship-to-FSG jurisdiction is now modeled and enforced in record visibility and awareness retrieval.
 
 ### First Files To Touch
 
