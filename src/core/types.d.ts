@@ -6,11 +6,15 @@ export interface ActorContext {
     shipId?: string;
 }
 export type EngineEventType = "DAILY_LOG_CHECK_DUE" | "DAILY_LOG_ESCALATION_DUE" | "PMS_TASK_GENERATE" | "PMS_TASK_CHECK" | "DEFECT_REPORTED" | "DEFECT_EVALUATION" | "APPROVAL_RECORD_CREATE" | "APPROVAL_RECORD_SUBMIT" | "APPROVAL_RECORD_APPROVE" | "APPROVAL_RECORD_REJECT" | "APPROVAL_RECORD_STALE_CHECK";
-export type ActionType = "MARK_COMPLIANT" | "MARK_NON_COMPLIANT" | "NOTIFY_MEO" | "ESCALATE_TO_CO" | "CHECK_TASK" | "CREATE_PMS_TASK" | "MARK_PMS_TASK_OVERDUE" | "REPLAN_PMS_TASK" | "NOTIFY_PMS_SUPERVISOR" | "CREATE_DEFECT_TASK" | "ESCALATE_DEFECT_TO_MCC" | "ESCALATE_DEFECT_TO_LOG_COMD" | "CREATE_APPROVAL_RECORD" | "SUBMIT_APPROVAL_RECORD" | "APPROVE_APPROVAL_RECORD" | "REJECT_APPROVAL_RECORD" | "NOTIFY_APPROVAL_OWNER" | "AUDIT_APPROVAL_INVALID_ATTEMPT";
+export type ActionType = "MARK_COMPLIANT" | "MARK_NON_COMPLIANT" | "NOTIFY_MEO" | "ESCALATE_TO_CO" | "CHECK_TASK" | "CREATE_DEFECT" | "CREATE_PMS_TASK" | "MARK_PMS_TASK_OVERDUE" | "REPLAN_PMS_TASK" | "NOTIFY_PMS_SUPERVISOR" | "CREATE_DEFECT_TASK" | "ESCALATE_DEFECT_TO_MCC" | "ESCALATE_DEFECT_TO_LOG_COMD" | "CREATE_APPROVAL_RECORD" | "SUBMIT_APPROVAL_RECORD" | "APPROVE_APPROVAL_RECORD" | "REJECT_APPROVAL_RECORD" | "NOTIFY_APPROVAL_OWNER" | "AUDIT_APPROVAL_INVALID_ATTEMPT";
 export type TaskKind = "PMS" | "DEFECT";
 export type TaskStatus = "PENDING" | "COMPLETED" | "OVERDUE";
+export type TaskExecutionStatus = "PENDING" | "COMPLETED" | "MISSED";
 export type TaskSeverity = "ROUTINE" | "URGENT" | "CRITICAL" | null;
 export type EscalationLevel = "NONE" | "MCC" | "LOG_COMD";
+export type ScheduleSource = "MPP" | "CYCLE" | "QUARTERLY" | "WEEKLY";
+export type IntervalType = "CALENDAR" | "USAGE";
+export type IntervalUnit = "DAYS" | "HOURS";
 export type ApprovalStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 export type FleetRecordKind = "MAINTENANCE_LOG" | "DEFECT" | "WORK_REQUEST";
 export type AwarenessBucket = "OWNED" | "PENDING_MY_ACTION" | "RECENTLY_REJECTED" | "VISIBLE_NOT_OWNED";
@@ -21,6 +25,36 @@ export interface Ship {
     id: string;
     name: string;
     classType: string;
+}
+export interface Equipment {
+    iss: string;
+    name: string;
+    system: string;
+    manufacturer?: string;
+    serialNumber?: string;
+    location?: string;
+}
+export interface MaintenanceInterval {
+    type: IntervalType;
+    value: number;
+    unit: IntervalUnit;
+}
+export interface UsageTracking {
+    hoursRun?: number;
+    shotsFired?: number;
+}
+export interface Defect {
+    id: string;
+    shipId: string;
+    iss: string;
+    equipment: string;
+    description: string;
+    classification: "IMMEDIATE" | "UNSCHEDULED" | "DELAYED";
+    operationalImpact: string;
+    reportedBy: string;
+    status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+    ettr?: number;
+    repairLevel?: "OLM" | "ILM" | "DLM";
 }
 export interface Notification {
     id: string;
@@ -94,28 +128,56 @@ export interface Task {
     parentTaskId: string | null;
     kind: TaskKind;
     title: string;
+    mic: string;
+    iss: string;
+    equipment: string;
+    cycleCode: string;
+    scheduleSource: ScheduleSource;
     businessDate: string;
     dueDate: string;
     assignedRole: AssignedRoleId;
     status: TaskStatus;
+    executionStatus: TaskExecutionStatus;
     completedAt: string | null;
+    verificationBy: string | null;
+    verificationAt: number | null;
     lastCheckedAt: string | null;
     lastOverdueAt: string | null;
     replannedFromDueDate: string | null;
     replannedToDueDate: string | null;
     lastNotifiedAt: string | null;
+    lastCompletedAt?: number;
+    nextDueAt?: number;
+    interval?: MaintenanceInterval;
+    calendarInterval?: MaintenanceInterval;
+    usageInterval?: MaintenanceInterval;
+    usageTracking?: UsageTracking;
+    requiresReplan?: boolean;
+    defectId?: string | null;
     ettrDays: number | null;
     severity: TaskSeverity;
     escalationLevel: EscalationLevel;
     escalatedAt: string | null;
+    sectionVerifiedBy?: string | null;
+    sectionVerifiedAt?: number | null;
+    departmentVerifiedBy?: string | null;
+    departmentVerifiedAt?: number | null;
 }
 export interface TaskStateSnapshot {
     shipId: string;
     parentTaskId: string | null;
     kind: TaskKind;
+    mic: string;
+    iss: string;
+    equipment: string;
+    cycleCode: string;
+    scheduleSource: ScheduleSource;
     assignedRole: AssignedRoleId;
     status: TaskStatus;
+    executionStatus: TaskExecutionStatus;
     completedAt: string | null;
+    verificationBy: string | null;
+    verificationAt: number | null;
     lastCheckedAt: string | null;
     lastOverdueAt: string | null;
     replannedFromDueDate: string | null;
@@ -123,9 +185,21 @@ export interface TaskStateSnapshot {
     escalationLevel: EscalationLevel;
     dueDate: string;
     lastNotifiedAt: string | null;
+    lastCompletedAt?: number;
+    nextDueAt?: number;
+    interval?: MaintenanceInterval;
+    calendarInterval?: MaintenanceInterval;
+    usageInterval?: MaintenanceInterval;
+    usageTracking?: UsageTracking;
+    requiresReplan?: boolean;
+    defectId?: string | null;
     ettrDays: number | null;
     severity: TaskSeverity;
     escalatedAt: string | null;
+    sectionVerifiedBy?: string | null;
+    sectionVerifiedAt?: number | null;
+    departmentVerifiedBy?: string | null;
+    departmentVerifiedAt?: number | null;
 }
 export interface ApprovalRecordSnapshot {
     shipId: string;
@@ -176,6 +250,8 @@ export interface EngineEvent {
     occurredAt: string;
     actor?: RoleId;
     shipId?: string;
+    iss?: string;
+    equipment?: string;
     taskId?: string;
     taskTitle?: string;
     dueDate?: string;
@@ -200,6 +276,14 @@ export interface ActionCommand {
     targetRole?: RoleId;
     actor?: RoleId;
     shipId?: string;
+    iss?: string;
+    equipment?: string;
+    defectId?: string;
+    defectDescription?: string;
+    defectClassification?: Defect["classification"];
+    operationalImpact?: string;
+    reportedBy?: string;
+    repairLevel?: Defect["repairLevel"];
     taskId?: string;
     parentTaskId?: string;
     taskTitle?: string;

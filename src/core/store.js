@@ -7,7 +7,7 @@ const config_1 = require("./config");
 const event_integrity_1 = require("./event-integrity");
 const logger_1 = require("./logger");
 const types_1 = require("./types");
-const STORE_STATE_VERSION = 10;
+const STORE_STATE_VERSION = 12;
 const DEFAULT_AWARENESS_STALE_THRESHOLD_HOURS = 24;
 const DEFAULT_AWARENESS_PENDING_THRESHOLD_HOURS = 48;
 const DEFAULT_AWARENESS_REJECTED_WINDOW_HOURS = 72;
@@ -15,15 +15,18 @@ const DEFAULT_AWARENESS_TOP_ACTIONABLE_LIMIT = 5;
 class InMemoryStore {
     constructor(persistenceFilePath = config_1.config.persistenceFilePath) {
         this.shipsById = new Map();
+        this.equipmentByIss = new Map();
         this.logsByDate = new Map();
         this.complianceByDate = new Map();
         this.escalationByDate = new Map();
         this.tasksById = new Map();
+        this.defectsById = new Map();
         this.taskHistoryById = new Map();
         this.recordsById = new Map();
         this.approvalHistoryById = new Map();
         this.processedTransitions = new Map();
         this.processedEventsById = new Map();
+        this.failedEventsById = new Map();
         this.notificationsById = new Map();
         this.complianceSignalsByKey = new Map();
         this.lastPersistenceTimestamp = null;
@@ -44,6 +47,18 @@ class InMemoryStore {
             eventType: "LOG_RECORDED",
             status: "UPDATED",
         });
+    }
+    saveEquipment(equipment) {
+        this.assertValidEquipment(equipment);
+        this.equipmentByIss.set(equipment.iss, equipment);
+        this.persistState();
+        return equipment;
+    }
+    getEquipment(iss) {
+        return this.equipmentByIss.get(iss) ?? null;
+    }
+    getAllEquipment() {
+        return [...this.equipmentByIss.values()];
     }
     getLogsForDate(shipId, businessDate) {
         const stateKey = this.getDailyStateKey(shipId, businessDate);
@@ -127,6 +142,15 @@ class InMemoryStore {
         this.assertShipExists(task.shipId);
         this.assertValidAssignedRole(task.assignedRole, "assignedRole");
         this.assertValidRole(actor, "actor");
+        this.assertTaskEquipmentLinkage(task);
+        if (task.kind === "DEFECT") {
+            if (!task.defectId) {
+                throw new Error(`Defect task ${task.id} requires defectId`);
+            }
+            if (!this.defectsById.has(task.defectId)) {
+                throw new Error(`Defect task ${task.id} references unknown defect: ${task.defectId}`);
+            }
+        }
         const existing = this.getTask(task.id);
         if (existing) {
             if (existing.shipId !== task.shipId) {
@@ -149,6 +173,61 @@ class InMemoryStore {
         this.persistState();
         return task;
     }
+    createDefect(defect) {
+        this.assertValidDefect(defect);
+        this.assertShipExists(defect.shipId);
+        const existing = this.defectsById.get(defect.id);
+        if (existing) {
+            return existing;
+        }
+        this.defectsById.set(defect.id, defect);
+        this.persistState();
+        return defect;
+    }
+    getDefect(defectId) {
+        return this.defectsById.get(defectId) ?? null;
+    }
+    getAllDefects() {
+        return [...this.defectsById.values()];
+    }
+    getTasksByDefectId(defectId) {
+        return this.getAllTasks().filter((task) => task.defectId === defectId);
+    }
+    getFailedEvents() {
+        return [...this.failedEventsById.entries()]
+            .map(([eventId, failure]) => ({
+            eventId,
+            reason: failure.reason,
+            timestamp: failure.timestamp,
+        }))
+            .sort((left, right) => left.eventId.localeCompare(right.eventId) ||
+            left.timestamp - right.timestamp ||
+            left.reason.localeCompare(right.reason));
+    }
+    getFailedEventById(eventId) {
+        const failure = this.failedEventsById.get(eventId);
+        if (!failure) {
+            return null;
+        }
+        return {
+            eventId,
+            reason: failure.reason,
+            timestamp: failure.timestamp,
+        };
+    }
+    updateDefectStatus(defectId, status) {
+        const current = this.getDefect(defectId);
+        if (!current) {
+            throw new Error(`Defect not found: ${defectId}`);
+        }
+        const next = {
+            ...current,
+            status,
+        };
+        this.defectsById.set(defectId, next);
+        this.persistState();
+        return next;
+    }
     getTask(taskId) {
         return this.tasksById.get(taskId) ?? null;
     }
@@ -167,10 +246,18 @@ class InMemoryStore {
             return current;
         }
         this.assertTaskStatusTransition(current.status, "COMPLETED");
+        const completedAtMs = Date.parse(occurredAt);
+        const nextDueAt = this.deriveNextDueAt(current, completedAtMs);
         return this.applyTaskUpdate(taskId, {
             status: "COMPLETED",
+            executionStatus: "COMPLETED",
             completedAt: occurredAt,
+            verificationBy: actor,
+            verificationAt: completedAtMs,
             lastCheckedAt: occurredAt,
+            lastCompletedAt: completedAtMs,
+            requiresReplan: false,
+            ...(typeof nextDueAt === "number" ? { nextDueAt } : {}),
         }, "COMPLETED", occurredAt, actor);
     }
     recordTaskCheck(taskId, occurredAt, actor) {
@@ -220,6 +307,9 @@ class InMemoryStore {
             parentTaskId: current.parentTaskId ?? current.id,
             replannedFromDueDate: current.dueDate,
             replannedToDueDate: nextDueDate,
+            executionStatus: current.executionStatus === "COMPLETED" ? "COMPLETED" : "MISSED",
+            nextDueAt: this.computeMinimalNextDueAt(current, occurredAt, nextDueDate),
+            requiresReplan: true,
         }, "REPLANNED", occurredAt, actor);
     }
     recordTaskNotification(taskId, occurredAt, actor) {
@@ -294,6 +384,24 @@ class InMemoryStore {
     markEventProcessed(eventId, processedAt) {
         const nextState = (0, event_integrity_1.markEventProcessed)(eventId, this.getEventIntegrityState(), processedAt);
         this.replaceProcessedEvents(nextState.processedEvents);
+        this.failedEventsById.delete(eventId);
+        this.persistState();
+    }
+    recordFailedEvent(eventId, reason, timestamp) {
+        this.failedEventsById.set(eventId, { reason, timestamp });
+        this.persistState();
+    }
+    clearFailedEvent(eventId) {
+        if (this.failedEventsById.delete(eventId)) {
+            this.persistState();
+        }
+    }
+    cleanupFailedEvents(now, ttlMs) {
+        for (const [eventId, failure] of this.failedEventsById.entries()) {
+            if (now - failure.timestamp > ttlMs) {
+                this.failedEventsById.delete(eventId);
+            }
+        }
         this.persistState();
     }
     cleanupProcessedEvents(now, ttlMs) {
@@ -1112,9 +1220,17 @@ class InMemoryStore {
             shipId: task.shipId,
             parentTaskId: task.parentTaskId,
             kind: task.kind,
+            mic: task.mic,
+            iss: task.iss,
+            equipment: task.equipment,
+            cycleCode: task.cycleCode,
+            scheduleSource: task.scheduleSource,
             assignedRole: task.assignedRole,
             status: task.status,
+            executionStatus: task.executionStatus,
             completedAt: task.completedAt,
+            verificationBy: task.verificationBy,
+            verificationAt: task.verificationAt,
             lastCheckedAt: task.lastCheckedAt,
             lastOverdueAt: task.lastOverdueAt,
             replannedFromDueDate: task.replannedFromDueDate,
@@ -1122,9 +1238,29 @@ class InMemoryStore {
             escalationLevel: task.escalationLevel,
             dueDate: task.dueDate,
             lastNotifiedAt: task.lastNotifiedAt,
+            ...(typeof task.lastCompletedAt === "number" ? { lastCompletedAt: task.lastCompletedAt } : {}),
+            ...(typeof task.nextDueAt === "number" ? { nextDueAt: task.nextDueAt } : {}),
+            ...(task.interval ? { interval: task.interval } : {}),
+            ...(task.calendarInterval ? { calendarInterval: task.calendarInterval } : {}),
+            ...(task.usageInterval ? { usageInterval: task.usageInterval } : {}),
+            ...(task.usageTracking ? { usageTracking: task.usageTracking } : {}),
+            ...(typeof task.requiresReplan !== "undefined" ? { requiresReplan: task.requiresReplan } : {}),
+            ...(typeof task.defectId !== "undefined" ? { defectId: task.defectId } : {}),
             ettrDays: task.ettrDays,
             severity: task.severity,
             escalatedAt: task.escalatedAt,
+            ...(typeof task.sectionVerifiedBy !== "undefined"
+                ? { sectionVerifiedBy: task.sectionVerifiedBy }
+                : {}),
+            ...(typeof task.sectionVerifiedAt !== "undefined"
+                ? { sectionVerifiedAt: task.sectionVerifiedAt }
+                : {}),
+            ...(typeof task.departmentVerifiedBy !== "undefined"
+                ? { departmentVerifiedBy: task.departmentVerifiedBy }
+                : {}),
+            ...(typeof task.departmentVerifiedAt !== "undefined"
+                ? { departmentVerifiedAt: task.departmentVerifiedAt }
+                : {}),
         };
     }
     createApprovalSnapshot(record) {
@@ -1154,9 +1290,17 @@ class InMemoryStore {
         return (left.shipId === right.shipId &&
             left.parentTaskId === right.parentTaskId &&
             left.kind === right.kind &&
+            left.mic === right.mic &&
+            left.iss === right.iss &&
+            left.equipment === right.equipment &&
+            left.cycleCode === right.cycleCode &&
+            left.scheduleSource === right.scheduleSource &&
             left.assignedRole === right.assignedRole &&
             left.status === right.status &&
+            left.executionStatus === right.executionStatus &&
             left.completedAt === right.completedAt &&
+            left.verificationBy === right.verificationBy &&
+            left.verificationAt === right.verificationAt &&
             left.lastCheckedAt === right.lastCheckedAt &&
             left.lastOverdueAt === right.lastOverdueAt &&
             left.replannedFromDueDate === right.replannedFromDueDate &&
@@ -1164,9 +1308,21 @@ class InMemoryStore {
             left.escalationLevel === right.escalationLevel &&
             left.dueDate === right.dueDate &&
             left.lastNotifiedAt === right.lastNotifiedAt &&
+            left.lastCompletedAt === right.lastCompletedAt &&
+            left.nextDueAt === right.nextDueAt &&
+            this.isSameInterval(left.interval, right.interval) &&
+            this.isSameInterval(left.calendarInterval, right.calendarInterval) &&
+            this.isSameInterval(left.usageInterval, right.usageInterval) &&
+            this.isSameUsageTracking(left.usageTracking, right.usageTracking) &&
+            left.requiresReplan === right.requiresReplan &&
+            left.defectId === right.defectId &&
             left.ettrDays === right.ettrDays &&
             left.severity === right.severity &&
-            left.escalatedAt === right.escalatedAt);
+            left.escalatedAt === right.escalatedAt &&
+            left.sectionVerifiedBy === right.sectionVerifiedBy &&
+            left.sectionVerifiedAt === right.sectionVerifiedAt &&
+            left.departmentVerifiedBy === right.departmentVerifiedBy &&
+            left.departmentVerifiedAt === right.departmentVerifiedAt);
     }
     isSameApprovalState(left, right) {
         return (left.shipId === right.shipId &&
@@ -1189,6 +1345,75 @@ class InMemoryStore {
             left.lastActionNote === right.lastActionNote &&
             left.lastStaleNotificationAt === right.lastStaleNotificationAt &&
             left.version === right.version);
+    }
+    isSameInterval(left, right) {
+        if (!left && !right) {
+            return true;
+        }
+        if (!left || !right) {
+            return false;
+        }
+        return (left.type === right.type &&
+            left.value === right.value &&
+            left.unit === right.unit);
+    }
+    isSameUsageTracking(left, right) {
+        if (!left && !right) {
+            return true;
+        }
+        if (!left || !right) {
+            return false;
+        }
+        return (left.hoursRun === right.hoursRun &&
+            left.shotsFired === right.shotsFired);
+    }
+    deriveNextDueAt(task, completedAt) {
+        if (!Number.isFinite(completedAt)) {
+            return task.nextDueAt;
+        }
+        const triggerCandidates = [
+            this.deriveIntervalDueAt(task.interval, completedAt),
+            this.deriveIntervalDueAt(task.calendarInterval, completedAt),
+            typeof task.nextDueAt === "number" && Number.isFinite(task.nextDueAt)
+                ? task.nextDueAt
+                : undefined,
+        ].filter((candidate) => typeof candidate === "number");
+        if (triggerCandidates.length === 0) {
+            return undefined;
+        }
+        return Math.min(...triggerCandidates);
+    }
+    deriveIntervalDueAt(interval, completedAt) {
+        if (!interval || interval.type !== "CALENDAR") {
+            return undefined;
+        }
+        return completedAt + this.convertIntervalToMs(interval);
+    }
+    computeMinimalNextDueAt(task, occurredAt, nextDueDate) {
+        const occurredAtMs = Date.parse(occurredAt);
+        const fallbackDueAt = Date.parse(nextDueDate);
+        const minimalIntervalMs = this.getMinimalIntervalMs(task);
+        if (Number.isFinite(occurredAtMs) && Number.isFinite(minimalIntervalMs)) {
+            return occurredAtMs + minimalIntervalMs;
+        }
+        if (Number.isFinite(fallbackDueAt)) {
+            return fallbackDueAt;
+        }
+        return Date.now() + 24 * 60 * 60 * 1000;
+    }
+    getMinimalIntervalMs(task) {
+        const intervals = [task.interval, task.calendarInterval, task.usageInterval]
+            .filter((interval) => Boolean(interval))
+            .map((interval) => this.convertIntervalToMs(interval))
+            .filter((value) => Number.isFinite(value) && value > 0);
+        if (intervals.length === 0) {
+            return 24 * 60 * 60 * 1000;
+        }
+        return Math.min(...intervals);
+    }
+    convertIntervalToMs(interval) {
+        const unitMs = interval.unit === "HOURS" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        return interval.value * unitMs;
     }
     applyApprovalTransition(recordId, shipId, actor, occurredAt, transitionId, actionType, reason, note, mutator) {
         this.assertValidShipId(shipId);
@@ -1317,6 +1542,24 @@ class InMemoryStore {
             throw new Error(`Unknown shipId: ${shipId}`);
         }
     }
+    assertTaskEquipmentLinkage(task) {
+        if (typeof task.iss !== "string" || task.iss.trim() === "") {
+            throw new Error(`Task ${task.id} requires iss`);
+        }
+        if (typeof task.equipment !== "string" || task.equipment.trim() === "") {
+            throw new Error(`Task ${task.id} requires equipment`);
+        }
+    }
+    assertValidEquipment(equipment) {
+        if (!this.isEquipment(equipment)) {
+            throw new Error("Invalid equipment");
+        }
+    }
+    assertValidDefect(defect) {
+        if (!this.isDefect(defect)) {
+            throw new Error("Invalid defect");
+        }
+    }
     loadPersistedState() {
         const loaded = this.tryLoadFromPath(this.persistenceFilePath)
             ?? this.tryLoadFromPath(this.backupFilePath);
@@ -1330,12 +1573,21 @@ class InMemoryStore {
         for (const ship of persisted.ships) {
             this.shipsById.set(ship.id, ship);
         }
+        this.equipmentByIss.clear();
+        for (const equipment of persisted.equipment) {
+            this.equipmentByIss.set(equipment.iss, equipment);
+        }
         for (const task of persisted.tasks) {
-            this.tasksById.set(task.id, task);
+            const hydratedTask = this.hydrateTask(task);
+            this.tasksById.set(hydratedTask.id, hydratedTask);
+        }
+        this.defectsById.clear();
+        for (const defect of persisted.defects) {
+            this.defectsById.set(defect.id, defect);
         }
         this.taskHistoryById.clear();
         for (const [taskId, history] of persisted.taskHistory) {
-            this.taskHistoryById.set(taskId, history);
+            this.taskHistoryById.set(taskId, history.map((entry) => this.hydrateTaskHistoryEntry(entry)));
         }
         this.recordsById.clear();
         for (const record of persisted.records) {
@@ -1352,6 +1604,10 @@ class InMemoryStore {
         this.processedEventsById.clear();
         for (const [eventId, processedAt] of Object.entries(persisted.processedEvents)) {
             this.processedEventsById.set(eventId, processedAt);
+        }
+        this.failedEventsById.clear();
+        for (const [eventId, failedEvent] of Object.entries(persisted.failedEvents)) {
+            this.failedEventsById.set(eventId, failedEvent);
         }
         this.escalationByDate.clear();
         for (const [businessDate, escalationState] of persisted.escalationState) {
@@ -1375,6 +1631,143 @@ class InMemoryStore {
             });
             this.lastPersistenceTimestamp = null;
         }
+    }
+    hydrateTask(task) {
+        return {
+            ...task,
+            mic: task.mic ?? "UNSPECIFIED-MIC",
+            iss: task.iss ?? "0000",
+            equipment: task.equipment ?? task.title,
+            cycleCode: task.cycleCode ?? "D",
+            scheduleSource: task.scheduleSource ?? "CYCLE",
+            executionStatus: task.executionStatus ?? this.deriveExecutionStatus(task.status),
+            verificationBy: task.verificationBy ?? null,
+            verificationAt: task.verificationAt ?? null,
+            ...(typeof task.lastCompletedAt === "number" ? { lastCompletedAt: task.lastCompletedAt } : {}),
+            ...(() => {
+                const nextDueAt = typeof task.nextDueAt === "number"
+                    ? task.nextDueAt
+                    : this.parseOptionalTimestamp(task.dueDate);
+                return typeof nextDueAt === "number" ? { nextDueAt } : {};
+            })(),
+            ...(task.interval ? { interval: task.interval } : {}),
+            ...(task.calendarInterval ? { calendarInterval: task.calendarInterval } : {}),
+            ...(task.usageInterval ? { usageInterval: task.usageInterval } : {}),
+            ...(task.usageTracking ? { usageTracking: task.usageTracking } : {}),
+            ...(typeof task.requiresReplan !== "undefined" ? { requiresReplan: task.requiresReplan } : {}),
+            ...(typeof task.defectId !== "undefined"
+                ? { defectId: task.defectId }
+                : task.kind === "DEFECT"
+                    ? { defectId: task.id }
+                    : {}),
+            ...(typeof task.sectionVerifiedBy !== "undefined"
+                ? { sectionVerifiedBy: task.sectionVerifiedBy }
+                : {}),
+            ...(typeof task.sectionVerifiedAt !== "undefined"
+                ? { sectionVerifiedAt: task.sectionVerifiedAt }
+                : {}),
+            ...(typeof task.departmentVerifiedBy !== "undefined"
+                ? { departmentVerifiedBy: task.departmentVerifiedBy }
+                : {}),
+            ...(typeof task.departmentVerifiedAt !== "undefined"
+                ? { departmentVerifiedAt: task.departmentVerifiedAt }
+                : {}),
+        };
+    }
+    hydrateTaskHistoryEntry(entry) {
+        return {
+            ...entry,
+            previousState: this.hydrateTaskStateSnapshot(entry.previousState),
+            newState: this.hydrateTaskStateSnapshot(entry.newState),
+        };
+    }
+    hydrateTaskStateSnapshot(snapshot) {
+        return {
+            ...snapshot,
+            mic: snapshot.mic ?? "UNSPECIFIED-MIC",
+            iss: snapshot.iss ?? "0000",
+            equipment: snapshot.equipment ?? "Unspecified Equipment",
+            cycleCode: snapshot.cycleCode ?? "D",
+            scheduleSource: snapshot.scheduleSource ?? "CYCLE",
+            executionStatus: snapshot.executionStatus ?? this.deriveExecutionStatus(snapshot.status),
+            verificationBy: snapshot.verificationBy ?? null,
+            verificationAt: snapshot.verificationAt ?? null,
+            ...(typeof snapshot.lastCompletedAt === "number"
+                ? { lastCompletedAt: snapshot.lastCompletedAt }
+                : {}),
+            ...(() => {
+                const nextDueAt = typeof snapshot.nextDueAt === "number"
+                    ? snapshot.nextDueAt
+                    : this.parseOptionalTimestamp(snapshot.dueDate);
+                return typeof nextDueAt === "number" ? { nextDueAt } : {};
+            })(),
+            ...(snapshot.interval ? { interval: snapshot.interval } : {}),
+            ...(snapshot.calendarInterval ? { calendarInterval: snapshot.calendarInterval } : {}),
+            ...(snapshot.usageInterval ? { usageInterval: snapshot.usageInterval } : {}),
+            ...(snapshot.usageTracking ? { usageTracking: snapshot.usageTracking } : {}),
+            ...(typeof snapshot.requiresReplan !== "undefined" ? { requiresReplan: snapshot.requiresReplan } : {}),
+            ...(typeof snapshot.defectId !== "undefined" ? { defectId: snapshot.defectId } : {}),
+            ...(typeof snapshot.sectionVerifiedBy !== "undefined"
+                ? { sectionVerifiedBy: snapshot.sectionVerifiedBy }
+                : {}),
+            ...(typeof snapshot.sectionVerifiedAt !== "undefined"
+                ? { sectionVerifiedAt: snapshot.sectionVerifiedAt }
+                : {}),
+            ...(typeof snapshot.departmentVerifiedBy !== "undefined"
+                ? { departmentVerifiedBy: snapshot.departmentVerifiedBy }
+                : {}),
+            ...(typeof snapshot.departmentVerifiedAt !== "undefined"
+                ? { departmentVerifiedAt: snapshot.departmentVerifiedAt }
+                : {}),
+        };
+    }
+    migrateTasks(value) {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+        return value
+            .filter((item) => isRecord(item))
+            .map((task) => this.hydrateTask(task));
+    }
+    migrateTaskHistory(value) {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+        return value
+            .filter((entry) => Array.isArray(entry) &&
+            entry.length === 2 &&
+            typeof entry[0] === "string" &&
+            Array.isArray(entry[1]))
+            .map(([taskId, history]) => [
+            taskId,
+            history.map((entry) => this.hydrateTaskHistoryEntry(entry)),
+        ]);
+    }
+    migrateEquipment(value) {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+        return value.filter((item) => this.isEquipment(item));
+    }
+    migrateDefects(value, taskValue) {
+        if (Array.isArray(value)) {
+            return value.filter((item) => this.isDefect(item));
+        }
+        return [];
+    }
+    deriveExecutionStatus(status) {
+        switch (status) {
+            case "COMPLETED":
+                return "COMPLETED";
+            case "OVERDUE":
+                return "MISSED";
+            default:
+                return "PENDING";
+        }
+    }
+    parseOptionalTimestamp(value) {
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
     }
     tryLoadFromPath(path) {
         if (!(0, fs_1.existsSync)(path)) {
@@ -1419,6 +1812,12 @@ class InMemoryStore {
         if (!Array.isArray(value.ships) || !value.ships.every((item) => this.isShip(item))) {
             return false;
         }
+        if (!Array.isArray(value.equipment) || !value.equipment.every((item) => this.isEquipment(item))) {
+            return false;
+        }
+        if (!Array.isArray(value.defects) || !value.defects.every((item) => this.isDefect(item))) {
+            return false;
+        }
         if (!Array.isArray(value.taskHistory) ||
             !value.taskHistory.every((entry) => this.isTaskHistoryTuple(entry))) {
             return false;
@@ -1439,6 +1838,16 @@ class InMemoryStore {
                 eventId.trim() !== "" &&
                 typeof processedAt === "number" &&
                 Number.isFinite(processedAt))) {
+            return false;
+        }
+        if (!isRecord(value.failedEvents) ||
+            !Object.entries(value.failedEvents).every(([eventId, failedEvent]) => typeof eventId === "string" &&
+                eventId.trim() !== "" &&
+                isRecord(failedEvent) &&
+                typeof failedEvent.reason === "string" &&
+                failedEvent.reason.trim() !== "" &&
+                typeof failedEvent.timestamp === "number" &&
+                Number.isFinite(failedEvent.timestamp))) {
             return false;
         }
         if (!Array.isArray(value.escalationState) ||
@@ -1462,33 +1871,48 @@ class InMemoryStore {
         if (value.version === STORE_STATE_VERSION) {
             return value;
         }
+        const baseState = {
+            version: STORE_STATE_VERSION,
+            ships: value.ships ?? [],
+            equipment: this.migrateEquipment(value.equipment),
+            tasks: this.migrateTasks(value.tasks),
+            defects: this.migrateDefects(value.defects, value.tasks),
+            taskHistory: this.migrateTaskHistory(value.taskHistory),
+            records: value.records ?? [],
+            approvalHistory: value.approvalHistory ?? [],
+            processedTransitions: value.processedTransitions ?? [],
+            escalationState: value.escalationState ?? [],
+            notifications: value.notifications ?? [],
+        };
         if (value.version === 9) {
             return {
-                version: STORE_STATE_VERSION,
-                ships: value.ships,
-                tasks: value.tasks,
-                taskHistory: value.taskHistory,
-                records: value.records,
-                approvalHistory: value.approvalHistory,
-                processedTransitions: value.processedTransitions,
+                ...baseState,
                 processedEvents: {},
-                escalationState: value.escalationState,
-                notifications: value.notifications,
-                complianceSignals: value.complianceSignals,
+                failedEvents: {},
+                complianceSignals: value.complianceSignals ?? [],
+            };
+        }
+        if (value.version === 10) {
+            return {
+                ...baseState,
+                processedEvents: value.processedEvents ?? {},
+                failedEvents: {},
+                complianceSignals: value.complianceSignals ?? [],
+            };
+        }
+        if (value.version === 11) {
+            return {
+                ...baseState,
+                processedEvents: value.processedEvents ?? {},
+                failedEvents: {},
+                complianceSignals: value.complianceSignals ?? [],
             };
         }
         if (value.version === 8) {
             return {
-                version: STORE_STATE_VERSION,
-                ships: value.ships,
-                tasks: value.tasks,
-                taskHistory: value.taskHistory,
-                records: value.records,
-                approvalHistory: value.approvalHistory,
-                processedTransitions: value.processedTransitions,
+                ...baseState,
                 processedEvents: {},
-                escalationState: value.escalationState,
-                notifications: value.notifications,
+                failedEvents: {},
                 complianceSignals: [],
             };
         }
@@ -1512,16 +1936,38 @@ class InMemoryStore {
             isNullableString(value.parentTaskId) &&
             (value.kind === "PMS" || value.kind === "DEFECT") &&
             typeof value.title === "string" &&
+            typeof value.mic === "string" &&
+            typeof value.iss === "string" &&
+            value.iss.trim() !== "" &&
+            typeof value.equipment === "string" &&
+            typeof value.cycleCode === "string" &&
+            (value.scheduleSource === "MPP" ||
+                value.scheduleSource === "CYCLE" ||
+                value.scheduleSource === "QUARTERLY" ||
+                value.scheduleSource === "WEEKLY") &&
             typeof value.businessDate === "string" &&
             typeof value.dueDate === "string" &&
             this.isAssignedRoleId(value.assignedRole) &&
             (value.status === "PENDING" || value.status === "COMPLETED" || value.status === "OVERDUE") &&
+            (value.executionStatus === "PENDING" ||
+                value.executionStatus === "COMPLETED" ||
+                value.executionStatus === "MISSED") &&
             isNullableString(value.completedAt) &&
+            isNullableString(value.verificationBy) &&
+            isNullableNumber(value.verificationAt) &&
             isNullableString(value.lastCheckedAt) &&
             isNullableString(value.lastOverdueAt) &&
             isNullableString(value.replannedFromDueDate) &&
             isNullableString(value.replannedToDueDate) &&
             isNullableString(value.lastNotifiedAt) &&
+            isOptionalNumber(value.lastCompletedAt) &&
+            isOptionalNumber(value.nextDueAt) &&
+            isOptionalMaintenanceInterval(value.interval) &&
+            isOptionalMaintenanceInterval(value.calendarInterval) &&
+            isOptionalMaintenanceInterval(value.usageInterval) &&
+            isOptionalUsageTracking(value.usageTracking) &&
+            (typeof value.requiresReplan === "undefined" || typeof value.requiresReplan === "boolean") &&
+            isOptionalNullableString(value.defectId) &&
             (typeof value.ettrDays === "number" || value.ettrDays === null) &&
             (value.severity === "ROUTINE" ||
                 value.severity === "URGENT" ||
@@ -1530,7 +1976,50 @@ class InMemoryStore {
             (value.escalationLevel === "NONE" ||
                 value.escalationLevel === "MCC" ||
                 value.escalationLevel === "LOG_COMD") &&
-            isNullableString(value.escalatedAt));
+            isNullableString(value.escalatedAt) &&
+            isOptionalNullableString(value.sectionVerifiedBy) &&
+            isOptionalNullableNumber(value.sectionVerifiedAt) &&
+            isOptionalNullableString(value.departmentVerifiedBy) &&
+            isOptionalNullableNumber(value.departmentVerifiedAt));
+    }
+    isEquipment(value) {
+        return (isRecord(value) &&
+            typeof value.iss === "string" &&
+            value.iss.trim() !== "" &&
+            typeof value.name === "string" &&
+            value.name.trim() !== "" &&
+            typeof value.system === "string" &&
+            value.system.trim() !== "" &&
+            isOptionalString(value.manufacturer) &&
+            isOptionalString(value.serialNumber) &&
+            isOptionalString(value.location));
+    }
+    isDefect(value) {
+        return (isRecord(value) &&
+            typeof value.id === "string" &&
+            value.id.trim() !== "" &&
+            typeof value.shipId === "string" &&
+            value.shipId.trim() !== "" &&
+            typeof value.iss === "string" &&
+            value.iss.trim() !== "" &&
+            typeof value.equipment === "string" &&
+            value.equipment.trim() !== "" &&
+            typeof value.description === "string" &&
+            value.description.trim() !== "" &&
+            (value.classification === "IMMEDIATE" ||
+                value.classification === "UNSCHEDULED" ||
+                value.classification === "DELAYED") &&
+            typeof value.operationalImpact === "string" &&
+            typeof value.reportedBy === "string" &&
+            (value.status === "OPEN" ||
+                value.status === "IN_PROGRESS" ||
+                value.status === "RESOLVED") &&
+            (typeof value.ettr === "undefined" ||
+                (typeof value.ettr === "number" && Number.isFinite(value.ettr))) &&
+            (typeof value.repairLevel === "undefined" ||
+                value.repairLevel === "OLM" ||
+                value.repairLevel === "ILM" ||
+                value.repairLevel === "DLM"));
     }
     isFleetRecord(value) {
         if (!isRecord(value)) {
@@ -1611,13 +2100,27 @@ class InMemoryStore {
             value.shipId.trim() !== "" &&
             isNullableString(value.parentTaskId) &&
             (value.kind === "PMS" || value.kind === "DEFECT") &&
+            typeof value.mic === "string" &&
+            typeof value.iss === "string" &&
+            value.iss.trim() !== "" &&
+            typeof value.equipment === "string" &&
+            typeof value.cycleCode === "string" &&
+            (value.scheduleSource === "MPP" ||
+                value.scheduleSource === "CYCLE" ||
+                value.scheduleSource === "QUARTERLY" ||
+                value.scheduleSource === "WEEKLY") &&
             (value.assignedRole === "COMMANDING_OFFICER" ||
                 value.assignedRole === "MARINE_ENGINEERING_OFFICER" ||
                 value.assignedRole === "WEAPON_ELECTRICAL_OFFICER" ||
                 value.assignedRole === "FLEET_SUPPORT_GROUP" ||
                 value.assignedRole === "LOGISTICS_COMMAND") &&
             (value.status === "PENDING" || value.status === "COMPLETED" || value.status === "OVERDUE") &&
+            (value.executionStatus === "PENDING" ||
+                value.executionStatus === "COMPLETED" ||
+                value.executionStatus === "MISSED") &&
             isNullableString(value.completedAt) &&
+            isNullableString(value.verificationBy) &&
+            isNullableNumber(value.verificationAt) &&
             isNullableString(value.lastCheckedAt) &&
             isNullableString(value.lastOverdueAt) &&
             isNullableString(value.replannedFromDueDate) &&
@@ -1627,12 +2130,24 @@ class InMemoryStore {
                 value.escalationLevel === "LOG_COMD") &&
             typeof value.dueDate === "string" &&
             isNullableString(value.lastNotifiedAt) &&
+            isOptionalNumber(value.lastCompletedAt) &&
+            isOptionalNumber(value.nextDueAt) &&
+            isOptionalMaintenanceInterval(value.interval) &&
+            isOptionalMaintenanceInterval(value.calendarInterval) &&
+            isOptionalMaintenanceInterval(value.usageInterval) &&
+            isOptionalUsageTracking(value.usageTracking) &&
+            (typeof value.requiresReplan === "undefined" || typeof value.requiresReplan === "boolean") &&
+            isOptionalNullableString(value.defectId) &&
             (typeof value.ettrDays === "number" || value.ettrDays === null) &&
             (value.severity === "ROUTINE" ||
                 value.severity === "URGENT" ||
                 value.severity === "CRITICAL" ||
                 value.severity === null) &&
-            isNullableString(value.escalatedAt));
+            isNullableString(value.escalatedAt) &&
+            isOptionalNullableString(value.sectionVerifiedBy) &&
+            isOptionalNullableNumber(value.sectionVerifiedAt) &&
+            isOptionalNullableString(value.departmentVerifiedBy) &&
+            isOptionalNullableNumber(value.departmentVerifiedAt));
     }
     isApprovalRecordSnapshot(value) {
         if (!isRecord(value)) {
@@ -1897,12 +2412,15 @@ class InMemoryStore {
     }
     resetPersistedState() {
         this.shipsById.clear();
+        this.equipmentByIss.clear();
         this.tasksById.clear();
+        this.defectsById.clear();
         this.taskHistoryById.clear();
         this.recordsById.clear();
         this.approvalHistoryById.clear();
         this.processedTransitions.clear();
         this.processedEventsById.clear();
+        this.failedEventsById.clear();
         this.escalationByDate.clear();
         this.notificationsById.clear();
         this.complianceSignalsByKey.clear();
@@ -1911,12 +2429,15 @@ class InMemoryStore {
         const payload = {
             version: STORE_STATE_VERSION,
             ships: [...this.shipsById.values()],
+            equipment: [...this.equipmentByIss.values()],
             tasks: [...this.tasksById.values()],
+            defects: [...this.defectsById.values()],
             taskHistory: [...this.taskHistoryById.entries()],
             records: [...this.recordsById.values()],
             approvalHistory: [...this.approvalHistoryById.entries()],
             processedTransitions: [...this.processedTransitions.entries()],
             processedEvents: Object.fromEntries([...this.processedEventsById.entries()].sort(([leftId], [rightId]) => leftId.localeCompare(rightId))),
+            failedEvents: Object.fromEntries([...this.failedEventsById.entries()].sort(([leftId], [rightId]) => leftId.localeCompare(rightId))),
             escalationState: [...this.escalationByDate.entries()],
             notifications: [...this.notificationsById.values()],
             complianceSignals: this.getAllComplianceSignals(),
@@ -1952,5 +2473,35 @@ function isRecord(value) {
 }
 function isNullableString(value) {
     return typeof value === "string" || value === null;
+}
+function isOptionalString(value) {
+    return typeof value === "undefined" || typeof value === "string";
+}
+function isNullableNumber(value) {
+    return (typeof value === "number" && Number.isFinite(value)) || value === null;
+}
+function isOptionalNullableNumber(value) {
+    return typeof value === "undefined" || isNullableNumber(value);
+}
+function isOptionalNumber(value) {
+    return typeof value === "undefined" || (typeof value === "number" && Number.isFinite(value));
+}
+function isOptionalNullableString(value) {
+    return typeof value === "undefined" || typeof value === "string" || value === null;
+}
+function isOptionalMaintenanceInterval(value) {
+    return (typeof value === "undefined" ||
+        (isRecord(value) &&
+            (value.type === "CALENDAR" || value.type === "USAGE") &&
+            typeof value.value === "number" &&
+            Number.isFinite(value.value) &&
+            value.value > 0 &&
+            (value.unit === "DAYS" || value.unit === "HOURS")));
+}
+function isOptionalUsageTracking(value) {
+    return (typeof value === "undefined" ||
+        (isRecord(value) &&
+            isOptionalNumber(value.hoursRun) &&
+            isOptionalNumber(value.shotsFired)));
 }
 //# sourceMappingURL=store.js.map

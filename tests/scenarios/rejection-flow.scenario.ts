@@ -39,7 +39,7 @@ export async function runScenario(): Promise<void> {
         recordId,
         businessDate,
         "2026-03-22T10:00:00.000Z",
-        "COMMANDING_OFFICER",
+        "FLEET_SUPPORT_GROUP",
         "REJECT-001-reject",
         "Missing cost estimate",
         "Attach estimate before resubmission",
@@ -53,7 +53,7 @@ export async function runScenario(): Promise<void> {
     assert.equal(recordView.record?.approval.lastActionReason, "Missing cost estimate");
     assert.equal(recordView.record?.approval.lastActionNote, "Attach estimate before resubmission");
     assert.equal(lastHistoryEntry?.actionType, "REJECTED");
-    assert.equal(lastHistoryEntry?.previousState.currentOwner, "COMMANDING_OFFICER");
+    assert.equal(lastHistoryEntry?.previousState.currentOwner, "FLEET_SUPPORT_GROUP");
     assert.equal(lastHistoryEntry?.newState.currentOwner, "MARINE_ENGINEERING_OFFICER");
 
     const meoSummary = app.store.getApprovalDashboardSummary({
@@ -65,7 +65,7 @@ export async function runScenario(): Promise<void> {
     const rejectedRecord = meoSummary.records.find((record) => record.recordId === recordId);
     assert.ok(rejectedRecord);
     assert.equal(rejectedRecord?.bucket, "RECENTLY_REJECTED");
-    assert.equal(rejectedRecord?.previousOwner, "COMMANDING_OFFICER");
+    assert.equal(rejectedRecord?.previousOwner, "FLEET_SUPPORT_GROUP");
     assert.ok(rejectedRecord?.attentionSignals.includes("BLOCKED_BY_REJECTION"));
   });
 }

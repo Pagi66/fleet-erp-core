@@ -44,7 +44,7 @@ function aggregateShipPressure(tasks) {
 function evaluateTaskPressure(tasks, now) {
     const signals = [];
     for (const task of tasks) {
-        if (task.status === "OVERDUE") {
+        if (task.status === "OVERDUE" || task.executionStatus === "MISSED") {
             const overdueDurationMs = computeOverdueDuration(task, now);
             signals.push({
                 type: "TASK_PRESSURE",
@@ -58,8 +58,8 @@ function evaluateTaskPressure(tasks, now) {
             continue;
         }
         if (task.status === "PENDING" &&
-            typeof task.dueAt === "number" &&
-            now > task.dueAt) {
+            typeof resolveDueAt(task) === "number" &&
+            now > resolveDueAt(task)) {
             signals.push({
                 type: "STALE_TASK",
                 severity: "WARNING",
@@ -110,5 +110,11 @@ function compareOptionalString(left, right) {
 }
 function formatDurationHours(durationMs) {
     return Math.floor(durationMs / (60 * 60 * 1000));
+}
+function resolveDueAt(task) {
+    if (typeof task.dueAt === "number" && typeof task.nextDueAt === "number") {
+        return Math.min(task.dueAt, task.nextDueAt);
+    }
+    return typeof task.nextDueAt === "number" ? task.nextDueAt : task.dueAt;
 }
 //# sourceMappingURL=compliance-pressure.js.map

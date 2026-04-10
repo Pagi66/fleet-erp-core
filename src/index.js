@@ -4,6 +4,7 @@ exports.createDailyLogEngineApp = createDailyLogEngineApp;
 const audit_approval_invalid_attempt_action_1 = require("./actions/audit-approval-invalid-attempt.action");
 const approve_approval_record_action_1 = require("./actions/approve-approval-record.action");
 const create_approval_record_action_1 = require("./actions/create-approval-record.action");
+const create_defect_action_1 = require("./actions/create-defect.action");
 const escalate_co_action_1 = require("./actions/escalate-co.action");
 const check_task_action_1 = require("./actions/check-task.action");
 const complete_task_action_1 = require("./actions/complete-task.action");
@@ -38,6 +39,7 @@ function createDailyLogEngineApp() {
     const eventBus = new event_system_1.EventBus();
     const auditApprovalInvalidAttemptAction = new audit_approval_invalid_attempt_action_1.AuditApprovalInvalidAttemptAction();
     const createApprovalRecordAction = new create_approval_record_action_1.CreateApprovalRecordAction();
+    const createDefectAction = new create_defect_action_1.CreateDefectAction();
     const submitApprovalRecordAction = new submit_approval_record_action_1.SubmitApprovalRecordAction();
     const approveApprovalRecordAction = new approve_approval_record_action_1.ApproveApprovalRecordAction();
     const rejectApprovalRecordAction = new reject_approval_record_action_1.RejectApprovalRecordAction();
@@ -62,6 +64,7 @@ function createDailyLogEngineApp() {
         pmsTaskRule,
         defectRule,
         createApprovalRecordAction,
+        createDefectAction,
         submitApprovalRecordAction,
         approveApprovalRecordAction,
         rejectApprovalRecordAction,
@@ -98,6 +101,7 @@ if (require.main === module) {
     const app = createDailyLogEngineApp();
     const health = app.getHealthCheck();
     const server = (0, server_1.startHttpServer)({
+        engine: app.engine,
         eventBus: app.eventBus,
         store: app.store,
         getHealthCheck: app.getHealthCheck,

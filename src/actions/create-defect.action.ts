@@ -27,6 +27,7 @@ export class CreateDefectAction {
     const defect: Defect = {
       id: command.defectId,
       shipId: command.shipId,
+      systemGroup: command.systemGroup ?? "GENERAL_ENGINEERING",
       iss: command.iss,
       equipment: command.equipment,
       description: command.defectDescription ?? command.taskTitle ?? command.equipment,

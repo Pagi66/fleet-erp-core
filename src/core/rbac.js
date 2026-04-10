@@ -9,6 +9,7 @@ function canExecuteAction(actor, command, task) {
     }
     switch (command.type) {
         case "CHECK_TASK":
+        case "CREATE_DEFECT":
         case "CREATE_PMS_TASK":
         case "CREATE_DEFECT_TASK":
         case "MARK_PMS_TASK_OVERDUE":

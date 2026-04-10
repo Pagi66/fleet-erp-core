@@ -28,10 +28,70 @@ function startHttpServer(dependencies, port = config_1.config.port) {
     return server;
 }
 async function handleRequest(request, response, dependencies) {
+    setCorsHeaders(response);
     const method = request.method ?? "GET";
     const url = new URL(request.url ?? "/", "http://localhost");
+    if (method === "OPTIONS") {
+        response.statusCode = 204;
+        response.end();
+        return;
+    }
     if (method === "GET" && url.pathname === "/health") {
         sendSuccess(response, dependencies.getHealthCheck());
+        return;
+    }
+    if (method === "GET" && url.pathname === "/reports/co") {
+        sendSuccess(response, dependencies.engine.getCoReport());
+        return;
+    }
+    if (method === "GET" && url.pathname.startsWith("/reports/meo/")) {
+        const shipId = getShipIdFromPath(url.pathname, "/reports/meo/");
+        if (!shipId) {
+            logRejectedRequest(request, "shipId is required");
+            sendError(response, 400, "shipId is required");
+            return;
+        }
+        sendSuccess(response, dependencies.engine.getMeoReport(shipId));
+        return;
+    }
+    if (method === "GET" && url.pathname.startsWith("/reports/weo/")) {
+        const shipId = getShipIdFromPath(url.pathname, "/reports/weo/");
+        if (!shipId) {
+            logRejectedRequest(request, "shipId is required");
+            sendError(response, 400, "shipId is required");
+            return;
+        }
+        sendSuccess(response, dependencies.engine.getWeoReport(shipId));
+        return;
+    }
+    if (method === "GET" && url.pathname === "/compliance") {
+        const pagination = getPagination(url);
+        if (!pagination.success) {
+            logRejectedRequest(request, pagination.error);
+            sendError(response, 400, pagination.error);
+            return;
+        }
+        const allSignals = dependencies.store.getAllComplianceSignals();
+        sendSuccess(response, paginate(allSignals, pagination.limit, pagination.offset), {
+            limit: pagination.limit,
+            offset: pagination.offset,
+            total: allSignals.length,
+        });
+        return;
+    }
+    if (method === "GET" && url.pathname === "/failed-events") {
+        const pagination = getPagination(url);
+        if (!pagination.success) {
+            logRejectedRequest(request, pagination.error);
+            sendError(response, 400, pagination.error);
+            return;
+        }
+        const failedEvents = dependencies.engine.getFailedEvents();
+        sendSuccess(response, paginate(failedEvents, pagination.limit, pagination.offset), {
+            limit: pagination.limit,
+            offset: pagination.offset,
+            total: failedEvents.length,
+        });
         return;
     }
     if (method === "GET" && url.pathname === "/tasks") {
@@ -280,6 +340,27 @@ async function handleRequest(request, response, dependencies) {
     }
     if (method === "POST" && url.pathname === "/events") {
         const payload = await readJsonBody(request);
+        const wrappedValidation = validateWrappedEventPayload(payload);
+        if (wrappedValidation.success) {
+            const idempotencyKey = getHeaderValue(request, "idempotency-key");
+            const event = {
+                ...wrappedValidation.data,
+                ...(idempotencyKey ? { id: idempotencyKey } : {}),
+            };
+            try {
+                const processed = dependencies.engine.routeEvent(event);
+                sendSuccess(response, undefined, {
+                    duplicate: !processed,
+                });
+                return;
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : "Execution failed";
+                logRejectedRequest(request, message);
+                sendError(response, 400, message);
+                return;
+            }
+        }
         const actor = extractRole(request, payload);
         if (!actor) {
             logRejectedRequest(request, "Missing or invalid role");
@@ -397,10 +478,12 @@ function sendJson(response, statusCode, body) {
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.end(JSON.stringify(body));
 }
-function sendSuccess(response, data) {
+function sendSuccess(response, data, options = {}) {
     sendJson(response, 200, {
         success: true,
-        data,
+        ...(typeof data !== "undefined" ? { data } : {}),
+        ...(typeof options.duplicate === "boolean" ? { duplicate: options.duplicate } : {}),
+        ...(options.meta ? { meta: options.meta } : {}),
     });
 }
 function sendError(response, statusCode, error) {
@@ -408,6 +491,11 @@ function sendError(response, statusCode, error) {
         success: false,
         error,
     });
+}
+function setCorsHeaders(response) {
+    response.setHeader("Access-Control-Allow-Origin", "*");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, X-Role");
 }
 function readJsonBody(request) {
     return new Promise((resolve, reject) => {
@@ -431,6 +519,49 @@ function readJsonBody(request) {
             reject(error);
         });
     });
+}
+function getShipIdFromPath(pathname, prefix) {
+    if (!pathname.startsWith(prefix)) {
+        return null;
+    }
+    const shipId = pathname.slice(prefix.length).trim();
+    return shipId === "" ? null : decodeURIComponent(shipId);
+}
+function getHeaderValue(request, name) {
+    const raw = request.headers[name];
+    if (typeof raw === "string" && raw.trim() !== "") {
+        return raw.trim();
+    }
+    return null;
+}
+function getPagination(url) {
+    const limit = getNumberQueryParam(url, "limit", 50);
+    if (!limit.success) {
+        return limit;
+    }
+    const offset = getNumberQueryParam(url, "offset", 0);
+    if (!offset.success) {
+        return offset;
+    }
+    return {
+        success: true,
+        limit: limit.value,
+        offset: offset.value,
+    };
+}
+function getNumberQueryParam(url, name, fallback) {
+    const raw = url.searchParams.get(name);
+    if (raw === null || raw.trim() === "") {
+        return { success: true, value: fallback };
+    }
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) {
+        return { success: false, error: `${name} must be a non-negative integer` };
+    }
+    return { success: true, value };
+}
+function paginate(items, limit, offset) {
+    return items.slice(offset, offset + limit);
 }
 function getTaskIdFromPath(pathname) {
     const match = pathname.match(/^\/tasks\/([^/]+)\/complete$/);
@@ -596,6 +727,31 @@ function validateEventPayload(value) {
         return { success: false, error: shapeError };
     }
     return { success: true, data: baseEvent };
+}
+function validateWrappedEventPayload(value) {
+    if (!isRecord(value)) {
+        return { success: false, error: "Request body must be an object" };
+    }
+    if (typeof value.type !== "string" || value.type.trim() === "") {
+        return { success: false, error: "type is required" };
+    }
+    if (!isRecord(value.payload)) {
+        return { success: false, error: "payload must be an object" };
+    }
+    const event = {
+        type: value.type,
+        ...value.payload,
+    };
+    if (typeof event.businessDate !== "string" || event.businessDate.trim() === "") {
+        return { success: false, error: "payload.businessDate is required" };
+    }
+    if (typeof event.occurredAt !== "string" || event.occurredAt.trim() === "") {
+        return { success: false, error: "payload.occurredAt is required" };
+    }
+    return {
+        success: true,
+        data: event,
+    };
 }
 function validateEventShape(event) {
     switch (event.type) {

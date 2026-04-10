@@ -1,6 +1,7 @@
 import { AuditApprovalInvalidAttemptAction } from "../actions/audit-approval-invalid-attempt.action";
 import { ApproveApprovalRecordAction } from "../actions/approve-approval-record.action";
 import { CreateApprovalRecordAction } from "../actions/create-approval-record.action";
+import { CreateDefectAction } from "../actions/create-defect.action";
 import { EscalateCoAction } from "../actions/escalate-co.action";
 import { CheckTaskAction } from "../actions/check-task.action";
 import { CreatePmsTaskAction } from "../actions/create-pms-task.action";
@@ -18,6 +19,7 @@ import { SubmitApprovalRecordAction } from "../actions/submit-approval-record.ac
 import { EngineEvent } from "./types";
 import { type CoReport, type MeoReport, type WeoReport } from "./reporting";
 import { InMemoryStore } from "./store";
+import type { FailedEventRecord } from "./store";
 import { ApprovalRule } from "../rules/approval.rule";
 import { DailyLogRule } from "../rules/daily-log.rule";
 import { DefectRule } from "../rules/defect.rule";
@@ -31,6 +33,7 @@ interface EngineDependencies {
     defectRule: DefectRule;
     auditApprovalInvalidAttemptAction: AuditApprovalInvalidAttemptAction;
     createApprovalRecordAction: CreateApprovalRecordAction;
+    createDefectAction: CreateDefectAction;
     submitApprovalRecordAction: SubmitApprovalRecordAction;
     approveApprovalRecordAction: ApproveApprovalRecordAction;
     rejectApprovalRecordAction: RejectApprovalRecordAction;
@@ -59,6 +62,7 @@ export declare class ComplianceEngine {
     getMeoReport(shipId: string): MeoReport;
     getWeoReport(shipId: string): WeoReport;
     getCoReport(): CoReport;
+    getFailedEvents(): FailedEventRecord[];
     private dispatch;
     private evaluate;
     private assertEventContext;

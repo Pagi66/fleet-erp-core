@@ -13,7 +13,8 @@ function evaluateTasks(state) {
     const signals = [];
     const overdueTaskCountsByShip = new Map();
     for (const task of state.tasks) {
-        if (task.status !== "OVERDUE") {
+        const isMissedTask = task.status === "OVERDUE" || task.executionStatus === "MISSED";
+        if (!isMissedTask) {
             continue;
         }
         signals.push({
@@ -41,7 +42,7 @@ function evaluateTasks(state) {
 function evaluateDefects(state) {
     const signals = [];
     for (const defect of state.defects) {
-        if (defect.status !== "OPEN") {
+        if (defect.status !== "OPEN" && defect.status !== "IN_PROGRESS") {
             continue;
         }
         signals.push({
@@ -51,6 +52,15 @@ function evaluateDefects(state) {
             shipId: defect.shipId,
             defectId: defect.id,
         });
+        if (typeof defect.ettr === "number" && defect.ettr >= 21) {
+            signals.push({
+                type: "DEFECT_ETTR_EXCEEDED",
+                severity: "CRITICAL",
+                message: `Defect ${defect.id} ETTR is ${defect.ettr} days`,
+                shipId: defect.shipId,
+                defectId: defect.id,
+            });
+        }
     }
     return signals;
 }

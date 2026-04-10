@@ -76,7 +76,13 @@ export function canManageApprovalRecord(
     case "CREATE_APPROVAL_RECORD":
       return (
         command.originRole === actor &&
-        (actor === "MARINE_ENGINEERING_OFFICER" || actor === "WEAPON_ELECTRICAL_OFFICER")
+        (
+          actor === "MARINE_ENGINEERING_OFFICER" ||
+          actor === "WEAPON_ELECTRICAL_OFFICER" ||
+          actor === "FLEET_SUPPORT_GROUP" ||
+          actor === "LOGISTICS_COMMAND" ||
+          actor === "COMMANDING_OFFICER"
+        )
       );
     case "SUBMIT_APPROVAL_RECORD":
       return (

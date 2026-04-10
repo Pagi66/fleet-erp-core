@@ -38,7 +38,7 @@ export async function runScenario(): Promise<void> {
       ),
     );
     view = app.store.getApprovalRecordViewInShip(recordId, shipId);
-    assert.equal(view.record?.approval.currentOwner, "COMMANDING_OFFICER");
+    assert.equal(view.record?.approval.currentOwner, "FLEET_SUPPORT_GROUP");
     assert.equal(view.record?.approval.status, "SUBMITTED");
 
     app.eventBus.emit(
@@ -48,20 +48,6 @@ export async function runScenario(): Promise<void> {
         recordId,
         businessDate,
         "2026-03-20T10:00:00.000Z",
-        "COMMANDING_OFFICER",
-        "FLOW-001-approve-co",
-      ),
-    );
-    view = app.store.getApprovalRecordViewInShip(recordId, shipId);
-    assert.equal(view.record?.approval.currentOwner, "FLEET_SUPPORT_GROUP");
-
-    app.eventBus.emit(
-      createApprovalTransitionEvent(
-        "APPROVAL_RECORD_APPROVE",
-        shipId,
-        recordId,
-        businessDate,
-        "2026-03-20T11:00:00.000Z",
         "FLEET_SUPPORT_GROUP",
         "FLOW-001-approve-fsg",
       ),
@@ -75,7 +61,7 @@ export async function runScenario(): Promise<void> {
         shipId,
         recordId,
         businessDate,
-        "2026-03-20T12:00:00.000Z",
+        "2026-03-20T11:00:00.000Z",
         "LOGISTICS_COMMAND",
         "FLOW-001-approve-log",
       ),
@@ -83,10 +69,10 @@ export async function runScenario(): Promise<void> {
     view = app.store.getApprovalRecordViewInShip(recordId, shipId);
     assert.equal(view.record?.approval.status, "APPROVED");
     assert.equal(view.record?.approval.currentOwner, "LOGISTICS_COMMAND");
-    assert.equal(view.history.length, 5);
+    assert.equal(view.history.length, 4);
     assert.deepEqual(
       view.history.map((entry) => entry.actionType),
-      ["CREATED", "SUBMITTED", "APPROVED", "APPROVED", "APPROVED"],
+      ["CREATED", "SUBMITTED", "APPROVED", "APPROVED"],
     );
 
     logScenario(SCENARIO, "running invalid action checks");
@@ -143,8 +129,8 @@ export async function runScenario(): Promise<void> {
       ),
     );
     const afterValidApprove = app.store.getApprovalRecordViewInShip(invalidRecordId, shipId);
-    assert.equal(afterValidApprove.record?.approval.currentOwner, "FLEET_SUPPORT_GROUP");
-    assert.equal(afterValidApprove.record?.approval.status, "SUBMITTED");
+    assert.equal(afterValidApprove.record?.approval.currentOwner, "MARINE_ENGINEERING_OFFICER");
+    assert.equal(afterValidApprove.record?.approval.status, "DRAFT");
 
     app.eventBus.emit(
       createApprovalTransitionEvent(
@@ -171,11 +157,11 @@ export async function runScenario(): Promise<void> {
     );
 
     const afterInvalid = app.store.getApprovalRecordViewInShip(invalidRecordId, shipId);
-    assert.equal(afterInvalid.record?.approval.currentOwner, "FLEET_SUPPORT_GROUP");
-    assert.equal(afterInvalid.record?.approval.status, "SUBMITTED");
+    assert.equal(afterInvalid.record?.approval.currentOwner, "MARINE_ENGINEERING_OFFICER");
+    assert.equal(afterInvalid.record?.approval.status, "DRAFT");
     assert.equal(
       afterInvalid.history.filter((entry) => entry.actionType === "INVALID_ATTEMPT").length,
-      2,
+      3,
     );
     assert.equal(
       app.store.getProcessedApprovalTransition("FLOW-INVALID-shared-transition")?.actionType,

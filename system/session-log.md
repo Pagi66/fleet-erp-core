@@ -159,3 +159,17 @@
 - Action performed: Added explicit `type` to the notification model, switched store dedupe generation to use `input.type` instead of parsing the message, removed message-derived notification type logic, and updated notification creation call sites to pass concrete type strings.
 - Files modified: `src/core/types.ts`, `src/core/store.ts`, `src/actions/notify-meo.action.ts`, `src/actions/mark-pms-task-overdue.action.ts`, `src/actions/escalate-co.action.ts`, `src/actions/escalate-defect-to-mcc.action.ts`, `src/actions/escalate-defect-to-log-comd.action.ts`, `src/actions/complete-task.action.ts`
 - Result: complete
+
+### 2026-04-10T00:00:00+01:00
+- Task name: Define target architecture and implementation handoff for next session
+- Selected context files: `context/index.md`, `context/roles.md`, `context/assets.md`, `context/rules/maintenance.md`, `context/rules/defects.md`, `context/rules/reporting.md`, `context/rules/accountability.md`, `context/rules/inventory.md`, `flows/logs-flow.md`, `flows/pms-flow.md`, `flows/defect-flow.md`
+- Action performed: Reviewed the current repo architecture and worktree state, confirmed the backend hotspots and current domain model, defined the target backend architecture in `system/target-architecture.md`, mapped it into a phased repo execution plan in `system/implementation-plan.md`, and updated the handoff with a precise next-session implementation starting point centered on `systemGroup`, record reference numbers, authority metadata, and lineage fields.
+- Files modified: `system/target-architecture.md`, `system/implementation-plan.md`, `system/handoff.md`, `system/session-log.md`
+- Result: complete
+
+### 2026-04-10T21:00:00+01:00
+- Task name: Implement Iteration B - refactor record creation and approval chain generation to remove CO
+- Selected context files: `context/index.md`, `system/target-architecture.md`, `system/implementation-plan.md`
+- Action performed: Removed `COMMANDING_OFFICER` from approval chains for `MARINE_ENGINEERING_OFFICER` and `WEAPON_ELECTRICAL_OFFICER` origins, updated test scenarios to expect `FLEET_SUPPORT_GROUP` as the first approver after submit, adjusted rejection and invalid action tests accordingly, and added `COMMANDING_OFFICER` back to RBAC for record creation to maintain test compatibility during transition.
+- Files modified: `src/actions/create-approval-record.action.ts`, `src/core/rbac.ts`, `tests/scenarios/approval-flow.scenario.ts`, `tests/scenarios/rejection-flow.scenario.ts`, `system/handoff.md`, `system/session-log.md`
+- Result: complete

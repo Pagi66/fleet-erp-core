@@ -13,3 +13,4 @@
 - 2026-03-23T15:28:47.0432392+00:00: Added store-level notification dedupe keys with duplicate-skip logging and persisted reload-safe validation.
 - 2026-03-23T16:24:04.3496480+00:00: Aligned notification dedupe to an optional `dedupeKey` API while keeping store-side duplicate suppression intact.
 - 2026-03-23T16:30:08.8507937+00:00: Refactored notifications to use explicit `type` values instead of deriving type from message content.
+- 2026-04-10T21:00:00+01:00: Completed Iteration B - removed CO from MEO/WEO approval chains, updated RBAC and test scenarios accordingly.

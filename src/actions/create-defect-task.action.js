@@ -11,6 +11,9 @@ class CreateDefectTaskAction {
         if (!command.actor) {
             throw new Error("CREATE_DEFECT_TASK command is missing actor");
         }
+        if (!command.defectId) {
+            throw new Error("CREATE_DEFECT_TASK command requires defectId");
+        }
         const actor = command.actor;
         if (!(0, rbac_1.canExecuteAction)(actor, command, null)) {
             logger_1.logger.warn("rbac_rejected_action", {
@@ -23,26 +26,47 @@ class CreateDefectTaskAction {
         if (store.getTaskInShip(command.taskId, command.shipId)) {
             return;
         }
+        const defect = store.getDefect(command.defectId);
+        if (!defect) {
+            throw new Error(`CREATE_DEFECT_TASK requires existing defect: ${command.defectId}`);
+        }
+        if (defect.shipId !== command.shipId) {
+            throw new Error("CREATE_DEFECT_TASK defect shipId mismatch");
+        }
         const task = {
             id: command.taskId,
             shipId: command.shipId,
             parentTaskId: command.parentTaskId ?? null,
             kind: "DEFECT",
             title: command.taskTitle,
+            mic: "UNSPECIFIED-MIC",
+            iss: defect.iss,
+            equipment: defect.equipment,
+            cycleCode: "Z",
+            scheduleSource: "CYCLE",
             businessDate: command.businessDate,
             dueDate: command.businessDate,
             assignedRole: command.assignedRole,
             status: "PENDING",
+            executionStatus: "PENDING",
             completedAt: null,
+            verificationBy: null,
+            verificationAt: null,
             lastCheckedAt: null,
             lastOverdueAt: null,
             replannedFromDueDate: null,
             replannedToDueDate: null,
             lastNotifiedAt: null,
+            nextDueAt: Date.parse(command.businessDate),
+            defectId: command.defectId,
             ettrDays: command.ettrDays ?? null,
             severity: command.severity ?? "ROUTINE",
             escalationLevel: "NONE",
             escalatedAt: null,
+            sectionVerifiedBy: null,
+            sectionVerifiedAt: null,
+            departmentVerifiedBy: null,
+            departmentVerifiedAt: null,
         };
         store.createTask(task, command.issuedAt, actor);
     }

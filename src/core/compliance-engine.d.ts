@@ -10,11 +10,13 @@ export interface ComplianceTaskState {
     id: string;
     status: "PENDING" | "COMPLETED" | "OVERDUE";
     shipId: string;
+    executionStatus?: "PENDING" | "COMPLETED" | "MISSED";
 }
 export interface ComplianceDefectState {
     id: string;
     shipId: string;
-    status: "OPEN" | "CLOSED";
+    status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+    ettr?: number;
 }
 export interface ComplianceEngineState {
     tasks: ComplianceTaskState[];

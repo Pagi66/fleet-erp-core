@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { submitEvent } from "../api/client";
+import { useEventSubmissionStore } from "../state/event-submission-store";
 
 const starterPayload = JSON.stringify(
   {
@@ -11,21 +11,17 @@ const starterPayload = JSON.stringify(
   2,
 );
 
-type SubmissionState =
-  | { kind: "idle" }
-  | { kind: "success"; message: string }
-  | { kind: "error"; message: string };
-
 export function EventForm() {
   const [type, setType] = useState("");
   const [payload, setPayload] = useState(starterPayload);
   const [idempotencyKey, setIdempotencyKey] = useState("");
-  const [status, setStatus] = useState<SubmissionState>({ kind: "idle" });
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const submission = useEventSubmissionStore();
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setStatus({ kind: "idle" });
+    setValidationError(null);
+    submission.reset();
 
     let parsedPayload: Record<string, unknown>;
     try {
@@ -35,33 +31,20 @@ export function EventForm() {
       }
       parsedPayload = candidate as Record<string, unknown>;
     } catch (error) {
-      setStatus({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Invalid JSON payload",
-      });
+      setValidationError(error instanceof Error ? error.message : "Invalid JSON payload");
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const result = await submitEvent({
-        type,
-        payload: parsedPayload,
-        idempotencyKey: idempotencyKey.trim() || undefined,
-      });
-
-      setStatus({
-        kind: "success",
-        message: result.duplicate ? "Duplicate event ignored by API." : "Event accepted successfully.",
-      });
-    } catch (error) {
-      setStatus({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Failed to submit event",
-      });
-    } finally {
-      setIsSubmitting(false);
+    if (type.trim() === "") {
+      setValidationError("Type is required");
+      return;
     }
+
+    await submission.submit({
+      type,
+      payload: parsedPayload,
+      idempotencyKey: idempotencyKey.trim() || undefined,
+    });
   }
 
   return (
@@ -96,11 +79,18 @@ export function EventForm() {
       </label>
 
       <div className="form-actions">
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Submitting..." : "Send Event"}
+        <button type="submit" disabled={submission.isSubmitting}>
+          {submission.isSubmitting ? "Submitting..." : "Send Event"}
         </button>
-        {status.kind !== "idle" ? (
-          <p className={status.kind === "error" ? "status-error" : "status-success"}>{status.message}</p>
+        {validationError ? <p className="status-error">{validationError}</p> : null}
+        {!validationError && submission.status.kind !== "idle" ? (
+          <p
+            className={
+              submission.status.kind === "error" ? "status-error" : "status-success"
+            }
+          >
+            {submission.status.message}
+          </p>
         ) : null}
       </div>
     </form>

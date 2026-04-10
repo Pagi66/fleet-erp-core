@@ -3,7 +3,18 @@ import { CompleteTaskAction } from "../actions/complete-task.action";
 import { config } from "../core/config";
 import { ComplianceEngine } from "../core/engine";
 import { logger } from "../core/logger";
-import { ActorContext, AssignedRoleId, EngineEvent, FleetRecordKind, RoleId } from "../core/types";
+import {
+  ActorContext,
+  AssignedRoleId,
+  EngineEvent,
+  FleetRecordKind,
+  LineageSourceType,
+  RecordAuthorityMode,
+  RecordDigitizationStage,
+  RecordSourceKind,
+  RoleId,
+  SystemGroupId,
+} from "../core/types";
 import { EventBus } from "../events/event-system";
 import { InMemoryStore } from "../core/store";
 
@@ -779,6 +790,13 @@ function validateEventPayload(
     baseEvent.taskKind = value.taskKind;
   }
 
+  if ("systemGroup" in value && typeof value.systemGroup !== "undefined") {
+    if (!isValidSystemGroup(value.systemGroup)) {
+      return { success: false, error: "systemGroup is invalid" };
+    }
+    baseEvent.systemGroup = value.systemGroup;
+  }
+
   if ("ettrDays" in value && typeof value.ettrDays !== "undefined") {
     if (typeof value.ettrDays !== "number" || Number.isNaN(value.ettrDays)) {
       return { success: false, error: "ettrDays is invalid" };
@@ -819,11 +837,80 @@ function validateEventPayload(
     baseEvent.recordTitle = value.recordTitle;
   }
 
+  if ("referenceNumber" in value && typeof value.referenceNumber !== "undefined") {
+    if (typeof value.referenceNumber !== "string" || value.referenceNumber.trim() === "") {
+      return { success: false, error: "referenceNumber is invalid" };
+    }
+    baseEvent.referenceNumber = value.referenceNumber;
+  }
+
   if ("description" in value && typeof value.description !== "undefined") {
     if (typeof value.description !== "string") {
       return { success: false, error: "description is invalid" };
     }
     baseEvent.description = value.description;
+  }
+
+  if ("authorityMode" in value && typeof value.authorityMode !== "undefined") {
+    if (value.authorityMode !== "PAPER_AUTHORITATIVE" && value.authorityMode !== "DIGITAL_AUTHORITATIVE") {
+      return { success: false, error: "authorityMode is invalid" };
+    }
+    baseEvent.authorityMode = value.authorityMode;
+  }
+
+  if ("sourceKind" in value && typeof value.sourceKind !== "undefined") {
+    if (
+      value.sourceKind !== "SCANNED_PAPER" &&
+      value.sourceKind !== "DIGITAL_ENTRY" &&
+      value.sourceKind !== "IMPORTED_DOCUMENT"
+    ) {
+      return { success: false, error: "sourceKind is invalid" };
+    }
+    baseEvent.sourceKind = value.sourceKind;
+  }
+
+  if ("digitizationStage" in value && typeof value.digitizationStage !== "undefined") {
+    if (
+      value.digitizationStage !== "INDEXED" &&
+      value.digitizationStage !== "PARTIALLY_STRUCTURED" &&
+      value.digitizationStage !== "FULLY_STRUCTURED"
+    ) {
+      return { success: false, error: "digitizationStage is invalid" };
+    }
+    baseEvent.digitizationStage = value.digitizationStage;
+  }
+
+  if ("originDirectiveId" in value && typeof value.originDirectiveId !== "undefined") {
+    if (typeof value.originDirectiveId !== "string" || value.originDirectiveId.trim() === "") {
+      return { success: false, error: "originDirectiveId is invalid" };
+    }
+    baseEvent.originDirectiveId = value.originDirectiveId;
+  }
+
+  if ("originRecordId" in value && typeof value.originRecordId !== "undefined") {
+    if (typeof value.originRecordId !== "string" || value.originRecordId.trim() === "") {
+      return { success: false, error: "originRecordId is invalid" };
+    }
+    baseEvent.originRecordId = value.originRecordId;
+  }
+
+  if ("derivedFromType" in value && typeof value.derivedFromType !== "undefined") {
+    if (
+      value.derivedFromType !== "DIRECTIVE" &&
+      value.derivedFromType !== "RECORD" &&
+      value.derivedFromType !== "TASK" &&
+      value.derivedFromType !== "DEFECT"
+    ) {
+      return { success: false, error: "derivedFromType is invalid" };
+    }
+    baseEvent.derivedFromType = value.derivedFromType;
+  }
+
+  if ("derivedFromId" in value && typeof value.derivedFromId !== "undefined") {
+    if (typeof value.derivedFromId !== "string" || value.derivedFromId.trim() === "") {
+      return { success: false, error: "derivedFromId is invalid" };
+    }
+    baseEvent.derivedFromId = value.derivedFromId;
   }
 
   if ("transitionId" in value && typeof value.transitionId !== "undefined") {
@@ -960,6 +1047,37 @@ function isValidAssignedRole(value: unknown): value is AssignedRoleId {
   );
 }
 
+function isValidSystemGroup(value: unknown): value is SystemGroupId {
+  return (
+    value === "PROPULSION" ||
+    value === "AUXILIARIES" ||
+    value === "ELECTRICAL_POWER" ||
+    value === "WEAPONS" ||
+    value === "SENSORS_AND_NAVIGATION" ||
+    value === "COMMUNICATIONS" ||
+    value === "HULL_AND_SEAKEEPING" ||
+    value === "DAMAGE_CONTROL_AND_SAFETY" ||
+    value === "SUPPLY_AND_SUPPORT" ||
+    value === "GENERAL_ENGINEERING"
+  );
+}
+
+function isValidRecordAuthorityMode(value: unknown): value is RecordAuthorityMode {
+  return value === "PAPER_AUTHORITATIVE" || value === "DIGITAL_AUTHORITATIVE";
+}
+
+function isValidRecordSourceKind(value: unknown): value is RecordSourceKind {
+  return value === "SCANNED_PAPER" || value === "DIGITAL_ENTRY" || value === "IMPORTED_DOCUMENT";
+}
+
+function isValidRecordDigitizationStage(value: unknown): value is RecordDigitizationStage {
+  return value === "INDEXED" || value === "PARTIALLY_STRUCTURED" || value === "FULLY_STRUCTURED";
+}
+
+function isValidLineageSourceType(value: unknown): value is LineageSourceType {
+  return value === "DIRECTIVE" || value === "RECORD" || value === "TASK" || value === "DEFECT";
+}
+
 function isValidRole(value: unknown): value is RoleId {
   return isValidAssignedRole(value) || value === "SYSTEM";
 }
@@ -1077,6 +1195,10 @@ function validateApprovalCreatePayload(
     return { success: false, error: "recordTitle is required" };
   }
 
+  if ("systemGroup" in value && typeof value.systemGroup !== "undefined" && !isValidSystemGroup(value.systemGroup)) {
+    return { success: false, error: "systemGroup is invalid" };
+  }
+
   if (typeof value.businessDate !== "string" || value.businessDate.trim() === "") {
     return { success: false, error: "businessDate is required" };
   }
@@ -1089,6 +1211,46 @@ function validateApprovalCreatePayload(
     return { success: false, error: "description must be a string" };
   }
 
+  if ("referenceNumber" in value && typeof value.referenceNumber !== "undefined" && typeof value.referenceNumber !== "string") {
+    return { success: false, error: "referenceNumber must be a string" };
+  }
+
+  if ("authorityMode" in value && typeof value.authorityMode !== "undefined") {
+    if (!isValidRecordAuthorityMode(value.authorityMode)) {
+      return { success: false, error: "authorityMode is invalid" };
+    }
+  }
+
+  if ("sourceKind" in value && typeof value.sourceKind !== "undefined") {
+    if (!isValidRecordSourceKind(value.sourceKind)) {
+      return { success: false, error: "sourceKind is invalid" };
+    }
+  }
+
+  if ("digitizationStage" in value && typeof value.digitizationStage !== "undefined") {
+    if (!isValidRecordDigitizationStage(value.digitizationStage)) {
+      return { success: false, error: "digitizationStage is invalid" };
+    }
+  }
+
+  if ("originDirectiveId" in value && typeof value.originDirectiveId !== "undefined" && typeof value.originDirectiveId !== "string") {
+    return { success: false, error: "originDirectiveId must be a string" };
+  }
+
+  if ("originRecordId" in value && typeof value.originRecordId !== "undefined" && typeof value.originRecordId !== "string") {
+    return { success: false, error: "originRecordId must be a string" };
+  }
+
+  if ("derivedFromType" in value && typeof value.derivedFromType !== "undefined") {
+    if (!isValidLineageSourceType(value.derivedFromType)) {
+      return { success: false, error: "derivedFromType is invalid" };
+    }
+  }
+
+  if ("derivedFromId" in value && typeof value.derivedFromId !== "undefined" && typeof value.derivedFromId !== "string") {
+    return { success: false, error: "derivedFromId must be a string" };
+  }
+
   const event: EngineEvent = {
     type: "APPROVAL_RECORD_CREATE",
     shipId: value.shipId,
@@ -1098,6 +1260,15 @@ function validateApprovalCreatePayload(
     businessDate: value.businessDate,
     occurredAt: value.occurredAt,
     actor,
+    ...(isValidSystemGroup(value.systemGroup) ? { systemGroup: value.systemGroup } : {}),
+    ...(typeof value.referenceNumber === "string" ? { referenceNumber: value.referenceNumber } : {}),
+    ...(isValidRecordAuthorityMode(value.authorityMode) ? { authorityMode: value.authorityMode } : {}),
+    ...(isValidRecordSourceKind(value.sourceKind) ? { sourceKind: value.sourceKind } : {}),
+    ...(isValidRecordDigitizationStage(value.digitizationStage) ? { digitizationStage: value.digitizationStage } : {}),
+    ...(typeof value.originDirectiveId === "string" ? { originDirectiveId: value.originDirectiveId } : {}),
+    ...(typeof value.originRecordId === "string" ? { originRecordId: value.originRecordId } : {}),
+    ...(isValidLineageSourceType(value.derivedFromType) ? { derivedFromType: value.derivedFromType } : {}),
+    ...(typeof value.derivedFromId === "string" ? { derivedFromId: value.derivedFromId } : {}),
     ...(typeof value.description === "string" ? { description: value.description } : {}),
   };
 

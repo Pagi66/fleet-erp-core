@@ -69,6 +69,26 @@ export type ApprovalStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 
 export type FleetRecordKind = "MAINTENANCE_LOG" | "DEFECT" | "WORK_REQUEST";
 
+export type SystemGroupId =
+  | "PROPULSION"
+  | "AUXILIARIES"
+  | "ELECTRICAL_POWER"
+  | "WEAPONS"
+  | "SENSORS_AND_NAVIGATION"
+  | "COMMUNICATIONS"
+  | "HULL_AND_SEAKEEPING"
+  | "DAMAGE_CONTROL_AND_SAFETY"
+  | "SUPPLY_AND_SUPPORT"
+  | "GENERAL_ENGINEERING";
+
+export type RecordAuthorityMode = "PAPER_AUTHORITATIVE" | "DIGITAL_AUTHORITATIVE";
+
+export type RecordSourceKind = "SCANNED_PAPER" | "DIGITAL_ENTRY" | "IMPORTED_DOCUMENT";
+
+export type RecordDigitizationStage = "INDEXED" | "PARTIALLY_STRUCTURED" | "FULLY_STRUCTURED";
+
+export type LineageSourceType = "DIRECTIVE" | "RECORD" | "TASK" | "DEFECT";
+
 export type AwarenessBucket =
   | "OWNED"
   | "PENDING_MY_ACTION"
@@ -126,6 +146,7 @@ export interface UsageTracking {
 export interface Defect {
   id: string;
   shipId: string;
+  systemGroup: SystemGroupId;
   iss: string;
   equipment: string;
   description: string;
@@ -169,13 +190,22 @@ export interface ApprovalFlow {
 
 export interface FleetRecord {
   id: string;
+  referenceNumber: string;
   shipId: string;
   kind: FleetRecordKind;
+  systemGroup: SystemGroupId;
   title: string;
   description: string | null;
   businessDate: string;
   createdAt: string;
   originRole: AssignedRoleId;
+  authorityMode: RecordAuthorityMode;
+  sourceKind: RecordSourceKind;
+  digitizationStage: RecordDigitizationStage;
+  originDirectiveId?: string | null;
+  originRecordId?: string | null;
+  derivedFromType?: LineageSourceType | null;
+  derivedFromId?: string | null;
   visibleTo: AssignedRoleId[];
   approval: ApprovalFlow;
 }
@@ -214,6 +244,7 @@ export interface Task {
   shipId: string;
   parentTaskId: string | null;
   kind: TaskKind;
+  systemGroup: SystemGroupId;
   title: string;
   mic: string;
   iss: string;
@@ -241,6 +272,10 @@ export interface Task {
   usageTracking?: UsageTracking;
   requiresReplan?: boolean;
   defectId?: string | null;
+  originDirectiveId?: string | null;
+  originRecordId?: string | null;
+  derivedFromType?: LineageSourceType | null;
+  derivedFromId?: string | null;
   ettrDays: number | null;
   severity: TaskSeverity;
   escalationLevel: EscalationLevel;
@@ -255,6 +290,7 @@ export interface TaskStateSnapshot {
   shipId: string;
   parentTaskId: string | null;
   kind: TaskKind;
+  systemGroup: SystemGroupId;
   mic: string;
   iss: string;
   equipment: string;
@@ -281,6 +317,10 @@ export interface TaskStateSnapshot {
   usageTracking?: UsageTracking;
   requiresReplan?: boolean;
   defectId?: string | null;
+  originDirectiveId?: string | null;
+  originRecordId?: string | null;
+  derivedFromType?: LineageSourceType | null;
+  derivedFromId?: string | null;
   ettrDays: number | null;
   severity: TaskSeverity;
   escalatedAt: string | null;
@@ -292,10 +332,19 @@ export interface TaskStateSnapshot {
 
 export interface ApprovalRecordSnapshot {
   shipId: string;
+  referenceNumber: string;
   kind: FleetRecordKind;
+  systemGroup: SystemGroupId;
   title: string;
   businessDate: string;
   originRole: AssignedRoleId;
+  authorityMode: RecordAuthorityMode;
+  sourceKind: RecordSourceKind;
+  digitizationStage: RecordDigitizationStage;
+  originDirectiveId?: string | null;
+  originRecordId?: string | null;
+  derivedFromType?: LineageSourceType | null;
+  derivedFromId?: string | null;
   chain: AssignedRoleId[];
   currentStepIndex: number;
   approvalLevel: number;
@@ -354,7 +403,16 @@ export interface EngineEvent {
   recordId?: string;
   recordKind?: FleetRecordKind;
   recordTitle?: string;
+  systemGroup?: SystemGroupId;
+  referenceNumber?: string;
   description?: string;
+  authorityMode?: RecordAuthorityMode;
+  sourceKind?: RecordSourceKind;
+  digitizationStage?: RecordDigitizationStage;
+  originDirectiveId?: string;
+  originRecordId?: string;
+  derivedFromType?: LineageSourceType;
+  derivedFromId?: string;
   transitionId?: string;
   reason?: string;
   note?: string;
@@ -383,13 +441,22 @@ export interface ActionCommand {
   dueDate?: string;
   assignedRole?: AssignedRoleId;
   taskKind?: TaskKind;
+  systemGroup?: SystemGroupId;
   ettrDays?: number;
   severity?: TaskSeverity;
   recordId?: string;
+  referenceNumber?: string;
   recordKind?: FleetRecordKind;
   recordTitle?: string;
   description?: string;
+  authorityMode?: RecordAuthorityMode;
+  sourceKind?: RecordSourceKind;
+  digitizationStage?: RecordDigitizationStage;
   originRole?: AssignedRoleId;
+  originDirectiveId?: string;
+  originRecordId?: string;
+  derivedFromType?: LineageSourceType;
+  derivedFromId?: string;
   transitionId?: string;
   reason?: string;
   note?: string;
@@ -441,10 +508,12 @@ export interface ApprovalAwarenessComputed {
 
 export interface ApprovalAwarenessRecord {
   recordId: string;
+  referenceNumber: string;
   shipId: string;
   shipName: string;
   shipClass: string;
   kind: FleetRecordKind;
+  systemGroup: SystemGroupId;
   title: string;
   businessDate: string;
   originRole: AssignedRoleId;

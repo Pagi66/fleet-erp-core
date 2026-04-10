@@ -1,8 +1,13 @@
 import type { ComplianceSignal } from "./compliance-engine";
-import { ActorContext, ApprovalAwarenessQueryOptions, ApprovalAwarenessRecord, ApprovalHistoryType, ApprovalRecordView, AssignedRoleId, DailyComplianceState, EscalationState, FleetRecord, LogRecord, LogType, Notification, RoleDashboardSummary, RoleId, Ship, StoreSnapshot, Task, TaskSnapshot } from "./types";
+import { ActorContext, ApprovalAwarenessQueryOptions, ApprovalAwarenessRecord, ApprovalHistoryType, ApprovalRecordView, AssignedRoleId, DailyComplianceState, Defect, Equipment, EscalationState, FleetRecord, LogRecord, LogType, Notification, RoleDashboardSummary, RoleId, Ship, StoreSnapshot, Task, TaskSnapshot } from "./types";
 interface ProcessedApprovalTransition {
     recordId: string;
     actionType: ApprovalHistoryType;
+}
+export interface FailedEventRecord {
+    eventId: string;
+    reason: string;
+    timestamp: number;
 }
 export interface StoreHealthCheck {
     running: boolean;
@@ -26,15 +31,18 @@ export interface StoreHealthCheck {
 }
 export declare class InMemoryStore {
     private readonly shipsById;
+    private readonly equipmentByIss;
     private readonly logsByDate;
     private readonly complianceByDate;
     private readonly escalationByDate;
     private readonly tasksById;
+    private readonly defectsById;
     private readonly taskHistoryById;
     private readonly recordsById;
     private readonly approvalHistoryById;
     private readonly processedTransitions;
     private readonly processedEventsById;
+    private readonly failedEventsById;
     private readonly notificationsById;
     private readonly complianceSignalsByKey;
     private readonly persistenceFilePath;
@@ -43,6 +51,9 @@ export declare class InMemoryStore {
     private lastPersistenceTimestamp;
     constructor(persistenceFilePath?: string);
     saveLog(record: LogRecord): void;
+    saveEquipment(equipment: Equipment): Equipment;
+    getEquipment(iss: string): Equipment | null;
+    getAllEquipment(): Equipment[];
     getLogsForDate(shipId: string, businessDate: string): LogRecord[];
     getOrCreateComplianceState(shipId: string, businessDate: string): DailyComplianceState;
     updateComplianceState(shipId: string, businessDate: string, update: Partial<DailyComplianceState>): DailyComplianceState;
@@ -50,6 +61,13 @@ export declare class InMemoryStore {
     updateEscalationState(shipId: string, businessDate: string, update: Partial<EscalationState>): EscalationState;
     getSnapshot(shipId: string, businessDate: string): StoreSnapshot;
     createTask(task: Task, occurredAt: string, actor: RoleId): Task;
+    createDefect(defect: Defect): Defect;
+    getDefect(defectId: string): Defect | null;
+    getAllDefects(): Defect[];
+    getTasksByDefectId(defectId: string): Task[];
+    getFailedEvents(): FailedEventRecord[];
+    getFailedEventById(eventId: string): FailedEventRecord | null;
+    updateDefectStatus(defectId: string, status: Defect["status"]): Defect;
     getTask(taskId: string): Task | null;
     getTaskInShip(taskId: string, shipId: string): Task | null;
     completeTask(taskId: string, occurredAt: string, actor: RoleId): Task;
@@ -67,6 +85,9 @@ export declare class InMemoryStore {
     getProcessedApprovalTransition(transitionId: string): ProcessedApprovalTransition | null;
     isEventProcessed(eventId: string): boolean;
     markEventProcessed(eventId: string, processedAt: number): void;
+    recordFailedEvent(eventId: string, reason: string, timestamp: number): void;
+    clearFailedEvent(eventId: string): void;
+    cleanupFailedEvents(now: number, ttlMs: number): void;
     cleanupProcessedEvents(now: number, ttlMs: number): void;
     getPreviousApprovalOwnerInShip(recordId: string, shipId: string): AssignedRoleId;
     getApprovalRecordsByShip(shipId: string): FleetRecord[];
@@ -131,6 +152,13 @@ export declare class InMemoryStore {
     private createApprovalSnapshot;
     private isSameState;
     private isSameApprovalState;
+    private isSameInterval;
+    private isSameUsageTracking;
+    private deriveNextDueAt;
+    private deriveIntervalDueAt;
+    private computeMinimalNextDueAt;
+    private getMinimalIntervalMs;
+    private convertIntervalToMs;
     private applyApprovalTransition;
     private assertTaskStatusTransition;
     private assertEscalationTransition;
@@ -141,11 +169,25 @@ export declare class InMemoryStore {
     private assertValidShipId;
     private assertValidShip;
     private assertShipExists;
+    private assertTaskEquipmentLinkage;
+    private assertValidEquipment;
+    private assertValidDefect;
     private loadPersistedState;
+    private hydrateTask;
+    private hydrateTaskHistoryEntry;
+    private hydrateTaskStateSnapshot;
+    private migrateTasks;
+    private migrateTaskHistory;
+    private migrateEquipment;
+    private migrateDefects;
+    private deriveExecutionStatus;
+    private parseOptionalTimestamp;
     private tryLoadFromPath;
     private validatePersistedState;
     private tryMigratePersistedState;
     private isTask;
+    private isEquipment;
+    private isDefect;
     private isFleetRecord;
     private isShip;
     private isTaskHistoryTuple;

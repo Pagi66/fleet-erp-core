@@ -9,6 +9,12 @@ class CompleteTaskAction {
         if (!task) {
             throw new Error(`Task not found: ${taskId}`);
         }
+        if (task.departmentVerifiedBy && !task.sectionVerifiedBy) {
+            throw new Error("Department verification requires prior section verification");
+        }
+        if (task.departmentVerifiedAt && !task.sectionVerifiedAt) {
+            throw new Error("Department verification timestamp requires prior section verification");
+        }
         if (!(0, rbac_1.canCompleteTask)(actor, task)) {
             logger_1.logger.warn("rbac_rejected_action", {
                 taskId,
@@ -17,15 +23,23 @@ class CompleteTaskAction {
             });
             throw new Error("Actor is not authorized to complete this task");
         }
-        const completed = store.completeTask(taskId, new Date().toISOString(), actor);
+        const completedAt = new Date().toISOString();
+        const completed = store.completeTask(taskId, completedAt, actor);
         store.createNotification({
             type: "TASK_COMPLETED",
             shipId: completed.shipId,
             taskId: completed.id,
             message: `Task completed: ${completed.title}`,
             targetRole: completed.assignedRole,
-            timestamp: completed.completedAt ?? new Date().toISOString(),
+            timestamp: completed.completedAt ?? completedAt,
         });
+        if (completed.defectId) {
+            const linkedTasks = store.getTasksByDefectId(completed.defectId);
+            const allCorrectiveTasksComplete = linkedTasks.every((linkedTask) => linkedTask.status === "COMPLETED");
+            if (allCorrectiveTasksComplete) {
+                store.updateDefectStatus(completed.defectId, "RESOLVED");
+            }
+        }
         return completed;
     }
 }

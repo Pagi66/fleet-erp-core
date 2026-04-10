@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 12,
   "ships": [
     {
       "id": "SHIP-A",
@@ -12,7 +12,9 @@
       "classType": "Corvette"
     }
   ],
+  "equipment": [],
   "tasks": [],
+  "defects": [],
   "taskHistory": [],
   "records": [
     {
@@ -48,7 +50,7 @@
         "lastActionAt": "2026-03-20T08:30:00.000Z",
         "lastActionReason": null,
         "lastActionNote": null,
-        "lastStaleNotificationAt": null,
+        "lastStaleNotificationAt": "2026-03-25T21:00:00.043Z",
         "version": 2
       }
     },
@@ -85,7 +87,7 @@
         "lastActionAt": "2026-03-21T08:30:00.000Z",
         "lastActionReason": null,
         "lastActionNote": null,
-        "lastStaleNotificationAt": null,
+        "lastStaleNotificationAt": "2026-03-25T21:00:00.043Z",
         "version": 2
       }
     },
@@ -291,6 +293,68 @@
           "transitionId": "CLI-001-submit",
           "reason": null,
           "note": null
+        },
+        {
+          "recordId": "CLI-001",
+          "shipId": "SHIP-A",
+          "timestamp": "2026-03-25T21:00:00.043Z",
+          "actionType": "STALE_REMINDER_SENT",
+          "previousState": {
+            "shipId": "SHIP-A",
+            "kind": "DEFECT",
+            "title": "Engine defect",
+            "businessDate": "2026-03-20",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 1,
+            "approvalLevel": 1,
+            "currentOwner": "COMMANDING_OFFICER",
+            "status": "SUBMITTED",
+            "submittedAt": "2026-03-20T08:30:00.000Z",
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+            "lastActionAt": "2026-03-20T08:30:00.000Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": null,
+            "version": 2
+          },
+          "newState": {
+            "shipId": "SHIP-A",
+            "kind": "DEFECT",
+            "title": "Engine defect",
+            "businessDate": "2026-03-20",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 1,
+            "approvalLevel": 1,
+            "currentOwner": "COMMANDING_OFFICER",
+            "status": "SUBMITTED",
+            "submittedAt": "2026-03-20T08:30:00.000Z",
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+            "lastActionAt": "2026-03-20T08:30:00.000Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": "2026-03-25T21:00:00.043Z",
+            "version": 2
+          },
+          "actor": "SYSTEM",
+          "transitionId": null,
+          "reason": "Stale approval reminder sent",
+          "note": null
         }
       ]
     ],
@@ -419,6 +483,68 @@
           "actor": "MARINE_ENGINEERING_OFFICER",
           "transitionId": "CLI-002-submit",
           "reason": null,
+          "note": null
+        },
+        {
+          "recordId": "CLI-002",
+          "shipId": "SHIP-B",
+          "timestamp": "2026-03-25T21:00:00.043Z",
+          "actionType": "STALE_REMINDER_SENT",
+          "previousState": {
+            "shipId": "SHIP-B",
+            "kind": "WORK_REQUEST",
+            "title": "Fuel issue",
+            "businessDate": "2026-03-20",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 1,
+            "approvalLevel": 1,
+            "currentOwner": "COMMANDING_OFFICER",
+            "status": "SUBMITTED",
+            "submittedAt": "2026-03-21T08:30:00.000Z",
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+            "lastActionAt": "2026-03-21T08:30:00.000Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": null,
+            "version": 2
+          },
+          "newState": {
+            "shipId": "SHIP-B",
+            "kind": "WORK_REQUEST",
+            "title": "Fuel issue",
+            "businessDate": "2026-03-20",
+            "originRole": "MARINE_ENGINEERING_OFFICER",
+            "chain": [
+              "MARINE_ENGINEERING_OFFICER",
+              "COMMANDING_OFFICER",
+              "FLEET_SUPPORT_GROUP",
+              "LOGISTICS_COMMAND"
+            ],
+            "currentStepIndex": 1,
+            "approvalLevel": 1,
+            "currentOwner": "COMMANDING_OFFICER",
+            "status": "SUBMITTED",
+            "submittedAt": "2026-03-21T08:30:00.000Z",
+            "approvedAt": null,
+            "rejectedAt": null,
+            "lastActionBy": "MARINE_ENGINEERING_OFFICER",
+            "lastActionAt": "2026-03-21T08:30:00.000Z",
+            "lastActionReason": null,
+            "lastActionNote": null,
+            "lastStaleNotificationAt": "2026-03-25T21:00:00.043Z",
+            "version": 2
+          },
+          "actor": "SYSTEM",
+          "transitionId": null,
+          "reason": "Stale approval reminder sent",
           "note": null
         }
       ]
@@ -988,12 +1114,45 @@
       }
     ]
   ],
+  "processedEvents": {
+    "APPROVAL_RECORD_STALE_CHECK:{\"actor\":\"SYSTEM\",\"businessDate\":\"2026-04-01\",\"shipId\":\"SHIP-A\",\"staleThresholdHours\":24}": 1775073600232,
+    "APPROVAL_RECORD_STALE_CHECK:{\"actor\":\"SYSTEM\",\"businessDate\":\"2026-04-01\",\"shipId\":\"SHIP-B\",\"staleThresholdHours\":24}": 1775073600268,
+    "APPROVAL_RECORD_STALE_CHECK:{\"actor\":\"SYSTEM\",\"businessDate\":\"2026-04-02\",\"shipId\":\"SHIP-A\",\"staleThresholdHours\":24}": 1775088000224,
+    "APPROVAL_RECORD_STALE_CHECK:{\"actor\":\"SYSTEM\",\"businessDate\":\"2026-04-02\",\"shipId\":\"SHIP-B\",\"staleThresholdHours\":24}": 1775088000252,
+    "DAILY_LOG_CHECK_DUE:{\"actor\":\"SYSTEM\",\"businessDate\":\"2026-04-01\",\"shipId\":\"SHIP-A\"}": 1775084340473,
+    "DAILY_LOG_CHECK_DUE:{\"actor\":\"SYSTEM\",\"businessDate\":\"2026-04-01\",\"shipId\":\"SHIP-B\"}": 1775084340518
+  },
+  "failedEvents": {},
   "escalationState": [
     [
       "SHIP-A:2026-03-25",
       {
         "shipId": "SHIP-A",
         "businessDate": "2026-03-25",
+        "status": "NOT_ESCALATED",
+        "reason": null,
+        "missingLogsAtEscalation": [],
+        "escalatedAt": null,
+        "targetRole": null
+      }
+    ],
+    [
+      "SHIP-A:2026-04-01",
+      {
+        "shipId": "SHIP-A",
+        "businessDate": "2026-04-01",
+        "status": "NOT_ESCALATED",
+        "reason": null,
+        "missingLogsAtEscalation": [],
+        "escalatedAt": null,
+        "targetRole": null
+      }
+    ],
+    [
+      "SHIP-B:2026-04-01",
+      {
+        "shipId": "SHIP-B",
+        "businessDate": "2026-04-01",
         "status": "NOT_ESCALATED",
         "reason": null,
         "missingLogsAtEscalation": [],
@@ -1122,6 +1281,53 @@
       "id": "notification_1774378905919_giltwo",
       "dedupeKey": "SHIP-B|APPROVAL_PENDING|NO_TASK|CLI-004|LOGISTICS_COMMAND",
       "read": false
+    },
+    {
+      "type": "APPROVAL_STALE",
+      "shipId": "SHIP-A",
+      "taskId": null,
+      "recordId": "CLI-001",
+      "message": "Approval record is awaiting your action: Engine defect",
+      "targetRole": "COMMANDING_OFFICER",
+      "timestamp": "2026-03-25T21:00:00.043Z",
+      "id": "notification_1774472400062_t6yc1b",
+      "dedupeKey": "SHIP-A|APPROVAL_STALE|NO_TASK|CLI-001|COMMANDING_OFFICER",
+      "read": false
+    },
+    {
+      "type": "APPROVAL_STALE",
+      "shipId": "SHIP-B",
+      "taskId": null,
+      "recordId": "CLI-002",
+      "message": "Approval record is awaiting your action: Fuel issue",
+      "targetRole": "COMMANDING_OFFICER",
+      "timestamp": "2026-03-25T21:00:00.043Z",
+      "id": "notification_1774472400121_7cr883",
+      "dedupeKey": "SHIP-B|APPROVAL_STALE|NO_TASK|CLI-002|COMMANDING_OFFICER",
+      "read": false
+    },
+    {
+      "type": "MISSING_DAILY_LOG",
+      "shipId": "SHIP-A",
+      "taskId": null,
+      "message": "Missing daily logs for 2026-04-01",
+      "targetRole": "MARINE_ENGINEERING_OFFICER",
+      "timestamp": "2026-04-01T22:59:00.240Z",
+      "id": "notification_1775084340414_0v6v39",
+      "dedupeKey": "SHIP-A|MISSING_DAILY_LOG|NO_TASK|NO_RECORD|MARINE_ENGINEERING_OFFICER",
+      "read": false
+    },
+    {
+      "type": "MISSING_DAILY_LOG",
+      "shipId": "SHIP-B",
+      "taskId": null,
+      "message": "Missing daily logs for 2026-04-01",
+      "targetRole": "MARINE_ENGINEERING_OFFICER",
+      "timestamp": "2026-04-01T22:59:00.240Z",
+      "id": "notification_1775084340496_1tabqz",
+      "dedupeKey": "SHIP-B|MISSING_DAILY_LOG|NO_TASK|NO_RECORD|MARINE_ENGINEERING_OFFICER",
+      "read": false
     }
-  ]
+  ],
+  "complianceSignals": []
 }

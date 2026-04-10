@@ -8,6 +8,18 @@ const input_guard_1 = require("./input-guard");
 const config_1 = require("./config");
 const logger_1 = require("./logger");
 const reporting_1 = require("./reporting");
+const ALLOWED_UNGUARDED_EVENT_TYPES = new Set([
+    "DAILY_LOG_CHECK_DUE",
+    "DAILY_LOG_ESCALATION_DUE",
+    "PMS_TASK_GENERATE",
+    "PMS_TASK_CHECK",
+    "DEFECT_EVALUATION",
+    "APPROVAL_RECORD_CREATE",
+    "APPROVAL_RECORD_SUBMIT",
+    "APPROVAL_RECORD_APPROVE",
+    "APPROVAL_RECORD_REJECT",
+    "APPROVAL_RECORD_STALE_CHECK",
+]);
 class ComplianceEngine {
     constructor(dependencies) {
         this.dependencies = dependencies;
@@ -24,6 +36,7 @@ class ComplianceEngine {
             this.assertInputGuard(event);
             const eventIntegrityId = this.resolveEventIntegrityId(event);
             this.dependencies.store.cleanupProcessedEvents(Date.now(), event_integrity_1.DEFAULT_PROCESSED_EVENT_TTL_MS);
+            this.dependencies.store.cleanupFailedEvents(Date.now(), event_integrity_1.DEFAULT_PROCESSED_EVENT_TTL_MS);
             if (this.dependencies.store.isEventProcessed(eventIntegrityId)) {
                 logger_1.logger.warn("processed_event_skipped", {
                     eventType: event.type,
@@ -62,10 +75,14 @@ class ComplianceEngine {
             if (decision.commands.length > 0) {
                 this.refreshComplianceSignals();
             }
+            this.dependencies.store.clearFailedEvent(eventIntegrityId);
             this.dependencies.store.markEventProcessed(eventIntegrityId, Date.now());
             return true;
         }
         catch (error) {
+            const eventIntegrityId = this.resolveEventIntegrityId(event);
+            const failureReason = error instanceof Error ? error.message : "Unknown event handling failure";
+            this.dependencies.store.recordFailedEvent(eventIntegrityId, failureReason, Date.now());
             logger_1.logger.error("event_handling_failed", error, {
                 eventType: event.type,
                 ...(event.taskId ? { taskId: event.taskId } : {}),
@@ -85,6 +102,9 @@ class ComplianceEngine {
     }
     getCoReport() {
         return (0, reporting_1.generateCoReport)(this.buildReadModelState());
+    }
+    getFailedEvents() {
+        return this.dependencies.store.getFailedEvents();
     }
     dispatch(command, eventType) {
         logger_1.logger.actionExecution({
@@ -106,6 +126,9 @@ class ComplianceEngine {
                 break;
             case "CHECK_TASK":
                 this.dependencies.checkTaskAction.execute(command, this.dependencies.store);
+                break;
+            case "CREATE_DEFECT":
+                this.dependencies.createDefectAction.execute(command, this.dependencies.store);
                 break;
             case "CREATE_PMS_TASK":
                 this.dependencies.createPmsTaskAction.execute(command, this.dependencies.store);
@@ -206,7 +229,15 @@ class ComplianceEngine {
     assertInputGuard(event) {
         const guardEvent = this.toInputGuardEvent(event);
         if (!guardEvent) {
-            return;
+            if (ALLOWED_UNGUARDED_EVENT_TYPES.has(event.type)) {
+                return;
+            }
+            logger_1.logger.warn("input_guard_rejected_event", {
+                eventType: event.type,
+                ...(event.taskId ? { taskId: event.taskId } : {}),
+                status: "No validation rule defined for event type",
+            });
+            throw new Error("No validation rule defined for event type");
         }
         const guardState = this.buildInputGuardState();
         const guardResult = (0, input_guard_1.runInputGuard)(guardEvent, guardState);
@@ -327,18 +358,19 @@ class ComplianceEngine {
     }
     refreshComplianceSignals() {
         const tasks = this.dependencies.store.getAllTasks();
+        const defects = this.dependencies.store.getAllDefects();
         const complianceSignals = (0, compliance_engine_1.evaluateCompliance)({
             tasks: tasks.map((task) => ({
                 id: task.id,
                 status: task.status,
                 shipId: task.shipId,
+                executionStatus: task.executionStatus,
             })),
-            defects: tasks
-                .filter((task) => task.kind === "DEFECT")
-                .map((task) => ({
-                id: task.id,
-                shipId: task.shipId,
-                status: task.status === "COMPLETED" ? "CLOSED" : "OPEN",
+            defects: defects.map((defect) => ({
+                id: defect.id,
+                shipId: defect.shipId,
+                status: defect.status,
+                ...(typeof defect.ettr === "number" ? { ettr: defect.ettr } : {}),
             })),
         });
         const pressureSignals = (0, compliance_pressure_1.evaluatePressure)({
@@ -346,7 +378,9 @@ class ComplianceEngine {
                 id: task.id,
                 shipId: task.shipId,
                 status: task.status,
+                executionStatus: task.executionStatus,
                 ...(task.dueDate ? { dueAt: Date.parse(task.dueDate) } : {}),
+                ...(typeof task.nextDueAt === "number" ? { nextDueAt: task.nextDueAt } : {}),
                 ...(task.lastOverdueAt ? { overdueSince: Date.parse(task.lastOverdueAt) } : {}),
             })),
             compliance: {
@@ -375,6 +409,7 @@ class ComplianceEngine {
             signal.type,
             signal.shipId ?? "NO_SHIP",
             signal.taskId ?? "NO_TASK",
+            signal.defectId ?? "NO_DEFECT",
         ].join("::");
     }
     compareSignals(left, right) {
@@ -432,14 +467,13 @@ class ComplianceEngine {
     }
     buildInputGuardState() {
         const tasks = this.dependencies.store.getAllTasks();
+        const defects = this.dependencies.store.getAllDefects();
         return {
-            defects: tasks
-                .filter((task) => task.kind === "DEFECT")
-                .map((task) => ({
-                id: task.id,
-                shipId: task.shipId,
-                title: task.title,
-                status: task.status,
+            defects: defects.map((defect) => ({
+                id: defect.id,
+                shipId: defect.shipId,
+                title: defect.description,
+                status: defect.status,
             })),
             tasks: tasks
                 .filter((task) => task.kind === "PMS")

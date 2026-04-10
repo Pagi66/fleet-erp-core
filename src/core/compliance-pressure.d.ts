@@ -10,7 +10,9 @@ export interface PressureTaskState {
     id: string;
     shipId: string;
     status: "PENDING" | "COMPLETED" | "OVERDUE";
+    executionStatus?: "PENDING" | "COMPLETED" | "MISSED";
     dueAt?: number;
+    nextDueAt?: number;
     overdueSince?: number;
 }
 export interface CompliancePressureState {

@@ -50,7 +50,7 @@ import {
   TaskStateSnapshot,
 } from "./types";
 
-const STORE_STATE_VERSION = 12;
+const STORE_STATE_VERSION = 13;
 const DEFAULT_AWARENESS_STALE_THRESHOLD_HOURS = 24;
 const DEFAULT_AWARENESS_PENDING_THRESHOLD_HOURS = 48;
 const DEFAULT_AWARENESS_REJECTED_WINDOW_HOURS = 72;
@@ -1361,10 +1361,12 @@ export class InMemoryStore {
 
     return {
       recordId: record.id,
+      referenceNumber: record.referenceNumber,
       shipId: record.shipId,
       shipName: ship.name,
       shipClass: ship.classType,
       kind: record.kind,
+      systemGroup: record.systemGroup,
       title: record.title,
       businessDate: record.businessDate,
       originRole: record.originRole,
@@ -1843,6 +1845,7 @@ export class InMemoryStore {
       shipId: task.shipId,
       parentTaskId: task.parentTaskId,
       kind: task.kind,
+      systemGroup: task.systemGroup,
       mic: task.mic,
       iss: task.iss,
       equipment: task.equipment,
@@ -1869,6 +1872,18 @@ export class InMemoryStore {
       ...(task.usageTracking ? { usageTracking: task.usageTracking } : {}),
       ...(typeof task.requiresReplan !== "undefined" ? { requiresReplan: task.requiresReplan } : {}),
       ...(typeof task.defectId !== "undefined" ? { defectId: task.defectId } : {}),
+      ...(typeof task.originDirectiveId !== "undefined"
+        ? { originDirectiveId: task.originDirectiveId }
+        : {}),
+      ...(typeof task.originRecordId !== "undefined"
+        ? { originRecordId: task.originRecordId }
+        : {}),
+      ...(typeof task.derivedFromType !== "undefined"
+        ? { derivedFromType: task.derivedFromType }
+        : {}),
+      ...(typeof task.derivedFromId !== "undefined"
+        ? { derivedFromId: task.derivedFromId }
+        : {}),
       ettrDays: task.ettrDays,
       severity: task.severity,
       escalatedAt: task.escalatedAt,
@@ -1890,10 +1905,27 @@ export class InMemoryStore {
   private createApprovalSnapshot(record: FleetRecord): ApprovalRecordSnapshot {
     return {
       shipId: record.shipId,
+      referenceNumber: record.referenceNumber,
       kind: record.kind,
+      systemGroup: record.systemGroup,
       title: record.title,
       businessDate: record.businessDate,
       originRole: record.originRole,
+      authorityMode: record.authorityMode,
+      sourceKind: record.sourceKind,
+      digitizationStage: record.digitizationStage,
+      ...(typeof record.originDirectiveId !== "undefined"
+        ? { originDirectiveId: record.originDirectiveId }
+        : {}),
+      ...(typeof record.originRecordId !== "undefined"
+        ? { originRecordId: record.originRecordId }
+        : {}),
+      ...(typeof record.derivedFromType !== "undefined"
+        ? { derivedFromType: record.derivedFromType }
+        : {}),
+      ...(typeof record.derivedFromId !== "undefined"
+        ? { derivedFromId: record.derivedFromId }
+        : {}),
       chain: [...record.approval.chain],
       currentStepIndex: record.approval.currentStepIndex,
       approvalLevel: record.approval.approvalLevel,
@@ -1919,6 +1951,7 @@ export class InMemoryStore {
       left.shipId === right.shipId &&
       left.parentTaskId === right.parentTaskId &&
       left.kind === right.kind &&
+      left.systemGroup === right.systemGroup &&
       left.mic === right.mic &&
       left.iss === right.iss &&
       left.equipment === right.equipment &&
@@ -1945,6 +1978,10 @@ export class InMemoryStore {
       this.isSameUsageTracking(left.usageTracking, right.usageTracking) &&
       left.requiresReplan === right.requiresReplan &&
       left.defectId === right.defectId &&
+      left.originDirectiveId === right.originDirectiveId &&
+      left.originRecordId === right.originRecordId &&
+      left.derivedFromType === right.derivedFromType &&
+      left.derivedFromId === right.derivedFromId &&
       left.ettrDays === right.ettrDays &&
       left.severity === right.severity &&
       left.escalatedAt === right.escalatedAt &&
@@ -1961,10 +1998,19 @@ export class InMemoryStore {
   ): boolean {
     return (
       left.shipId === right.shipId &&
+      left.referenceNumber === right.referenceNumber &&
       left.kind === right.kind &&
+      left.systemGroup === right.systemGroup &&
       left.title === right.title &&
       left.businessDate === right.businessDate &&
       left.originRole === right.originRole &&
+      left.authorityMode === right.authorityMode &&
+      left.sourceKind === right.sourceKind &&
+      left.digitizationStage === right.digitizationStage &&
+      left.originDirectiveId === right.originDirectiveId &&
+      left.originRecordId === right.originRecordId &&
+      left.derivedFromType === right.derivedFromType &&
+      left.derivedFromId === right.derivedFromId &&
       left.chain.length === right.chain.length &&
       left.chain.every((role, index) => role === right.chain[index]) &&
       left.currentStepIndex === right.currentStepIndex &&
@@ -2392,6 +2438,7 @@ export class InMemoryStore {
   private hydrateTask(task: Task): Task {
     return {
       ...task,
+      systemGroup: task.systemGroup ?? "GENERAL_ENGINEERING",
       mic: task.mic ?? "UNSPECIFIED-MIC",
       iss: task.iss ?? "0000",
       equipment: task.equipment ?? task.title,
@@ -2418,6 +2465,18 @@ export class InMemoryStore {
         : task.kind === "DEFECT"
           ? { defectId: task.id }
           : {}),
+      ...(typeof task.originDirectiveId !== "undefined"
+        ? { originDirectiveId: task.originDirectiveId }
+        : {}),
+      ...(typeof task.originRecordId !== "undefined"
+        ? { originRecordId: task.originRecordId }
+        : {}),
+      ...(typeof task.derivedFromType !== "undefined"
+        ? { derivedFromType: task.derivedFromType }
+        : {}),
+      ...(typeof task.derivedFromId !== "undefined"
+        ? { derivedFromId: task.derivedFromId }
+        : {}),
       ...(typeof task.sectionVerifiedBy !== "undefined"
         ? { sectionVerifiedBy: task.sectionVerifiedBy }
         : {}),
@@ -2444,6 +2503,7 @@ export class InMemoryStore {
   private hydrateTaskStateSnapshot(snapshot: TaskStateSnapshot): TaskStateSnapshot {
     return {
       ...snapshot,
+      systemGroup: snapshot.systemGroup ?? "GENERAL_ENGINEERING",
       mic: snapshot.mic ?? "UNSPECIFIED-MIC",
       iss: snapshot.iss ?? "0000",
       equipment: snapshot.equipment ?? "Unspecified Equipment",
@@ -2468,6 +2528,18 @@ export class InMemoryStore {
       ...(snapshot.usageTracking ? { usageTracking: snapshot.usageTracking } : {}),
       ...(typeof snapshot.requiresReplan !== "undefined" ? { requiresReplan: snapshot.requiresReplan } : {}),
       ...(typeof snapshot.defectId !== "undefined" ? { defectId: snapshot.defectId } : {}),
+      ...(typeof snapshot.originDirectiveId !== "undefined"
+        ? { originDirectiveId: snapshot.originDirectiveId }
+        : {}),
+      ...(typeof snapshot.originRecordId !== "undefined"
+        ? { originRecordId: snapshot.originRecordId }
+        : {}),
+      ...(typeof snapshot.derivedFromType !== "undefined"
+        ? { derivedFromType: snapshot.derivedFromType }
+        : {}),
+      ...(typeof snapshot.derivedFromId !== "undefined"
+        ? { derivedFromId: snapshot.derivedFromId }
+        : {}),
       ...(typeof snapshot.sectionVerifiedBy !== "undefined"
         ? { sectionVerifiedBy: snapshot.sectionVerifiedBy }
         : {}),
@@ -2479,6 +2551,62 @@ export class InMemoryStore {
         : {}),
       ...(typeof snapshot.departmentVerifiedAt !== "undefined"
         ? { departmentVerifiedAt: snapshot.departmentVerifiedAt }
+        : {}),
+    };
+  }
+
+  private hydrateFleetRecord(record: FleetRecord): FleetRecord {
+    return {
+      ...record,
+      referenceNumber:
+        record.referenceNumber
+        ?? `NN-FLT-${this.getFleetRecordKindCode(record.kind)}-${record.shipId.toUpperCase()}-${record.id.toUpperCase()}`,
+      systemGroup: record.systemGroup ?? "GENERAL_ENGINEERING",
+      authorityMode: record.authorityMode ?? "PAPER_AUTHORITATIVE",
+      sourceKind: record.sourceKind ?? "DIGITAL_ENTRY",
+      digitizationStage: record.digitizationStage ?? "INDEXED",
+      ...(typeof record.originDirectiveId !== "undefined"
+        ? { originDirectiveId: record.originDirectiveId }
+        : {}),
+      ...(typeof record.originRecordId !== "undefined"
+        ? { originRecordId: record.originRecordId }
+        : {}),
+      ...(typeof record.derivedFromType !== "undefined"
+        ? { derivedFromType: record.derivedFromType }
+        : {}),
+      ...(typeof record.derivedFromId !== "undefined"
+        ? { derivedFromId: record.derivedFromId }
+        : {}),
+    };
+  }
+
+  private hydrateApprovalHistoryEntry(entry: ApprovalHistoryEntry): ApprovalHistoryEntry {
+    return {
+      ...entry,
+      previousState: this.hydrateApprovalRecordSnapshot(entry.previousState),
+      newState: this.hydrateApprovalRecordSnapshot(entry.newState),
+    };
+  }
+
+  private hydrateApprovalRecordSnapshot(snapshot: ApprovalRecordSnapshot): ApprovalRecordSnapshot {
+    return {
+      ...snapshot,
+      referenceNumber: snapshot.referenceNumber ?? "UNKNOWN-REFERENCE",
+      systemGroup: snapshot.systemGroup ?? "GENERAL_ENGINEERING",
+      authorityMode: snapshot.authorityMode ?? "PAPER_AUTHORITATIVE",
+      sourceKind: snapshot.sourceKind ?? "DIGITAL_ENTRY",
+      digitizationStage: snapshot.digitizationStage ?? "INDEXED",
+      ...(typeof snapshot.originDirectiveId !== "undefined"
+        ? { originDirectiveId: snapshot.originDirectiveId }
+        : {}),
+      ...(typeof snapshot.originRecordId !== "undefined"
+        ? { originRecordId: snapshot.originRecordId }
+        : {}),
+      ...(typeof snapshot.derivedFromType !== "undefined"
+        ? { derivedFromType: snapshot.derivedFromType }
+        : {}),
+      ...(typeof snapshot.derivedFromId !== "undefined"
+        ? { derivedFromId: snapshot.derivedFromId }
         : {}),
     };
   }
@@ -2521,7 +2649,16 @@ export class InMemoryStore {
 
   private migrateDefects(value: unknown, taskValue: unknown): Defect[] {
     if (Array.isArray(value)) {
-      return value.filter((item): item is Defect => this.isDefect(item));
+      return value
+        .filter((item): item is Defect => isRecord(item))
+        .map((item) => ({
+          ...(item as Defect),
+          systemGroup:
+            this.isSystemGroupId(item.systemGroup)
+            ? item.systemGroup
+            : "GENERAL_ENGINEERING",
+        }))
+        .filter((item): item is Defect => this.isDefect(item));
     }
 
     return [];
@@ -2697,13 +2834,40 @@ export class InMemoryStore {
       tasks: this.migrateTasks(value.tasks),
       defects: this.migrateDefects(value.defects, value.tasks),
       taskHistory: this.migrateTaskHistory(value.taskHistory),
-      records: (value.records as FleetRecord[]) ?? [],
-      approvalHistory: (value.approvalHistory as Array<[string, ApprovalHistoryEntry[]]>) ?? [],
+      records: Array.isArray(value.records)
+        ? value.records
+            .filter((item): item is FleetRecord => isRecord(item))
+            .map((item) => this.hydrateFleetRecord(item as FleetRecord))
+        : [],
+      approvalHistory: Array.isArray(value.approvalHistory)
+        ? value.approvalHistory
+            .filter((entry): entry is [string, ApprovalHistoryEntry[]] =>
+              Array.isArray(entry) &&
+              entry.length === 2 &&
+              typeof entry[0] === "string" &&
+              Array.isArray(entry[1]),
+            )
+            .map(
+              ([recordId, history]): [string, ApprovalHistoryEntry[]] => [
+                recordId,
+                history.map((entry) => this.hydrateApprovalHistoryEntry(entry)),
+              ],
+            )
+        : [],
       processedTransitions:
         (value.processedTransitions as Array<[string, ProcessedApprovalTransition]>) ?? [],
       escalationState: (value.escalationState as Array<[string, EscalationState]>) ?? [],
       notifications: (value.notifications as Notification[]) ?? [],
     };
+
+      if (value.version === 12) {
+        return {
+          ...baseState,
+          processedEvents: (value.processedEvents as Record<string, number>) ?? {},
+          failedEvents: (value.failedEvents as Record<string, { reason: string; timestamp: number }>) ?? {},
+          complianceSignals: (value.complianceSignals as ComplianceSignal[]) ?? [],
+        };
+      }
 
       if (value.version === 9) {
         return {
@@ -2763,6 +2927,7 @@ export class InMemoryStore {
       value.shipId.trim() !== "" &&
       isNullableString(value.parentTaskId) &&
       (value.kind === "PMS" || value.kind === "DEFECT") &&
+      this.isSystemGroupId(value.systemGroup) &&
       typeof value.title === "string" &&
       typeof value.mic === "string" &&
       typeof value.iss === "string" &&
@@ -2796,6 +2961,12 @@ export class InMemoryStore {
         isOptionalUsageTracking(value.usageTracking) &&
       (typeof value.requiresReplan === "undefined" || typeof value.requiresReplan === "boolean") &&
       isOptionalNullableString(value.defectId) &&
+      isOptionalNullableString(value.originDirectiveId) &&
+      isOptionalNullableString(value.originRecordId) &&
+      (typeof value.derivedFromType === "undefined" ||
+        value.derivedFromType === null ||
+        this.isLineageSourceType(value.derivedFromType)) &&
+      isOptionalNullableString(value.derivedFromId) &&
       (typeof value.ettrDays === "number" || value.ettrDays === null) &&
       (value.severity === "ROUTINE" ||
         value.severity === "URGENT" ||
@@ -2834,6 +3005,7 @@ export class InMemoryStore {
       value.id.trim() !== "" &&
       typeof value.shipId === "string" &&
       value.shipId.trim() !== "" &&
+      this.isSystemGroupId(value.systemGroup) &&
       typeof value.iss === "string" &&
       value.iss.trim() !== "" &&
       typeof value.equipment === "string" &&
@@ -2864,15 +3036,27 @@ export class InMemoryStore {
 
     return (
       typeof value.id === "string" &&
+      typeof value.referenceNumber === "string" &&
+      value.referenceNumber.trim() !== "" &&
       typeof value.shipId === "string" &&
       value.shipId.trim() !== "" &&
       this.isFleetRecordKind(value.kind) &&
+      this.isSystemGroupId(value.systemGroup) &&
       typeof value.title === "string" &&
       value.title.trim() !== "" &&
       (typeof value.description === "string" || value.description === null) &&
       typeof value.businessDate === "string" &&
       typeof value.createdAt === "string" &&
       this.isAssignedRoleId(value.originRole) &&
+      this.isRecordAuthorityMode(value.authorityMode) &&
+      this.isRecordSourceKind(value.sourceKind) &&
+      this.isRecordDigitizationStage(value.digitizationStage) &&
+      isOptionalNullableString(value.originDirectiveId) &&
+      isOptionalNullableString(value.originRecordId) &&
+      (typeof value.derivedFromType === "undefined" ||
+        value.derivedFromType === null ||
+        this.isLineageSourceType(value.derivedFromType)) &&
+      isOptionalNullableString(value.derivedFromId) &&
       Array.isArray(value.visibleTo) &&
       value.visibleTo.length >= 1 &&
       value.visibleTo.every((role) => this.isAssignedRoleId(role)) &&
@@ -2959,6 +3143,7 @@ export class InMemoryStore {
       value.shipId.trim() !== "" &&
       isNullableString(value.parentTaskId) &&
       (value.kind === "PMS" || value.kind === "DEFECT") &&
+      this.isSystemGroupId(value.systemGroup) &&
       typeof value.mic === "string" &&
       typeof value.iss === "string" &&
       value.iss.trim() !== "" &&
@@ -2997,6 +3182,12 @@ export class InMemoryStore {
       isOptionalUsageTracking(value.usageTracking) &&
       (typeof value.requiresReplan === "undefined" || typeof value.requiresReplan === "boolean") &&
       isOptionalNullableString(value.defectId) &&
+      isOptionalNullableString(value.originDirectiveId) &&
+      isOptionalNullableString(value.originRecordId) &&
+      (typeof value.derivedFromType === "undefined" ||
+        value.derivedFromType === null ||
+        this.isLineageSourceType(value.derivedFromType)) &&
+      isOptionalNullableString(value.derivedFromId) &&
       (typeof value.ettrDays === "number" || value.ettrDays === null) &&
       (value.severity === "ROUTINE" ||
         value.severity === "URGENT" ||
@@ -3018,10 +3209,22 @@ export class InMemoryStore {
     return (
       typeof value.shipId === "string" &&
       value.shipId.trim() !== "" &&
+      typeof value.referenceNumber === "string" &&
+      value.referenceNumber.trim() !== "" &&
       this.isFleetRecordKind(value.kind) &&
+      this.isSystemGroupId(value.systemGroup) &&
       typeof value.title === "string" &&
       typeof value.businessDate === "string" &&
       this.isAssignedRoleId(value.originRole) &&
+      this.isRecordAuthorityMode(value.authorityMode) &&
+      this.isRecordSourceKind(value.sourceKind) &&
+      this.isRecordDigitizationStage(value.digitizationStage) &&
+      isOptionalNullableString(value.originDirectiveId) &&
+      isOptionalNullableString(value.originRecordId) &&
+      (typeof value.derivedFromType === "undefined" ||
+        value.derivedFromType === null ||
+        this.isLineageSourceType(value.derivedFromType)) &&
+      isOptionalNullableString(value.derivedFromId) &&
       Array.isArray(value.chain) &&
       value.chain.length >= 2 &&
       value.chain.every((role) => this.isAssignedRoleId(role)) &&
@@ -3176,6 +3379,37 @@ export class InMemoryStore {
     );
   }
 
+  private isSystemGroupId(value: unknown): value is Task["systemGroup"] {
+    return (
+      value === "PROPULSION" ||
+      value === "AUXILIARIES" ||
+      value === "ELECTRICAL_POWER" ||
+      value === "WEAPONS" ||
+      value === "SENSORS_AND_NAVIGATION" ||
+      value === "COMMUNICATIONS" ||
+      value === "HULL_AND_SEAKEEPING" ||
+      value === "DAMAGE_CONTROL_AND_SAFETY" ||
+      value === "SUPPLY_AND_SUPPORT" ||
+      value === "GENERAL_ENGINEERING"
+    );
+  }
+
+  private isRecordAuthorityMode(value: unknown): value is FleetRecord["authorityMode"] {
+    return value === "PAPER_AUTHORITATIVE" || value === "DIGITAL_AUTHORITATIVE";
+  }
+
+  private isRecordSourceKind(value: unknown): value is FleetRecord["sourceKind"] {
+    return value === "SCANNED_PAPER" || value === "DIGITAL_ENTRY" || value === "IMPORTED_DOCUMENT";
+  }
+
+  private isRecordDigitizationStage(value: unknown): value is FleetRecord["digitizationStage"] {
+    return value === "INDEXED" || value === "PARTIALLY_STRUCTURED" || value === "FULLY_STRUCTURED";
+  }
+
+  private isLineageSourceType(value: unknown): value is NonNullable<Task["derivedFromType"]> {
+    return value === "DIRECTIVE" || value === "RECORD" || value === "TASK" || value === "DEFECT";
+  }
+
   private isTaskHistoryType(value: unknown): value is TaskHistoryType {
     return (
       value === "CREATED" ||
@@ -3251,6 +3485,21 @@ export class InMemoryStore {
 
     if (record.approval.chain[record.approval.currentStepIndex] !== record.approval.currentOwner) {
       throw new Error("Approval currentOwner must match the current chain step");
+    }
+  }
+
+  private getFleetRecordKindCode(kind: FleetRecordKind): string {
+    switch (kind) {
+      case "MAINTENANCE_LOG":
+        return "ML";
+      case "DEFECT":
+        return "DR";
+      case "WORK_REQUEST":
+        return "WR";
+      default: {
+        const exhaustiveCheck: never = kind;
+        return exhaustiveCheck;
+      }
     }
   }
 
