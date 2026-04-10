@@ -14,4 +14,5 @@
 - 2026-03-23T16:24:04.3496480+00:00: Aligned notification dedupe to an optional `dedupeKey` API while keeping store-side duplicate suppression intact.
 - 2026-03-23T16:30:08.8507937+00:00: Refactored notifications to use explicit `type` values instead of deriving type from message content.
 - 2026-04-10T21:00:00+01:00: Completed Iteration B - removed CO from MEO/WEO approval chains, updated RBAC and test scenarios accordingly.
+- 2026-04-10T23:00:00+01:00: Completed Iteration D Phase 1 - split monolithic types.ts into context-specific modules (shared, records, maintenance, defects) with backward-compatible re-exports from core/types.ts.
 - 2026-04-10T22:00:00+01:00: Completed Iteration C - added explicit ship-to-FSG jurisdiction support and enforced it in retrieval and awareness.

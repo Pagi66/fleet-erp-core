@@ -180,3 +180,10 @@
 - Action performed: Added `jurisdictions` array to `Ship` interface to model oversight relationships, updated ship initialization in scenarios to include FSG jurisdiction for all ships, enforced jurisdiction checks in record visibility logic for FSG role, updated store validation and persistence version, and ensured awareness and retrieval methods respect jurisdiction boundaries.
 - Files modified: `src/core/types.ts`, `src/core/store.ts`, `tests/scenarios/helpers.ts`, `system/handoff.md`, `system/session-log.md`
 - Result: complete
+
+### 2026-04-10T23:00:00+01:00
+- Task name: Implement Iteration D Phase 1 - split monolithic types.ts into context-specific modules
+- Selected context files: `context/index.md`, `system/target-architecture.md`, `system/implementation-plan.md`
+- Action performed: Created modular type structure by extracting types into domain-specific modules: `src/shared/types.ts` contains shared primitives and IDs (RoleId, AssignedRoleId, SystemGroupId, EngineEventType, ActionType, Ship, Equipment, etc.); `src/records/types.ts` contains record domain models (FleetRecord, ApprovalStatus, ApprovalFlow, ApprovalHistoryEntry, record awareness types); `src/maintenance/types.ts` contains task domain models (Task, TaskKind, TaskStatus, TaskHistoryEntry, TaskStateSnapshot); `src/defects/types.ts` contains defect models (Defect). Updated `src/core/types.ts` to re-export all types from domain modules for backward compatibility while removing duplicate type definitions. Added index.ts files to each module for clean imports. Reorganized core/types.ts to contain only orchestration types (EngineEvent, ActionCommand, RuleDecision) that span multiple domains.
+- Files modified: Created `src/shared/types.ts`, `src/shared/index.ts`, `src/records/types.ts`, `src/records/index.ts`, `src/maintenance/types.ts`, `src/maintenance/index.ts`, `src/defects/types.ts`, `src/defects/index.ts`; refactored `src/core/types.ts`
+- Result: complete - foundation laid for Type System Phase 2 refactoring

@@ -86,9 +86,11 @@
 
 ### Start Here Next Session
 
-Implement `Iteration D` from `system/implementation-plan.md`.
+Continue with `Iteration D Phase 2` from `system/implementation-plan.md`: introduce the `records/` module extraction from the store.
 
-`Iteration C` is now complete. Explicit ship-to-FSG jurisdiction is now modeled and enforced in record visibility and awareness retrieval.
+`Iteration C` is complete: Explicit ship-to-FSG jurisdiction is modeled and enforced in record visibility and awareness retrieval.
+
+`Iteration D Phase 1` is complete: Type system has been split into context-specific modules (shared, records, maintenance, defects) with core/types.ts now serving as a re-export hub for backward compatibility. This provides the foundation for breaking up the InMemoryStore and introducing domain-specific repositories.
 
 ### First Files To Touch
 
